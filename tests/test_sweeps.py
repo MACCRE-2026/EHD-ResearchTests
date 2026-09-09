@@ -50,13 +50,20 @@ def test_sweep_wire_radius_onset_increases() -> None:
 
 
 def test_sweep_gap_has_breakdown_and_onset_margins() -> None:
-    """Gap sweep reports air-breakdown and corona-onset margins."""
+    """Gap sweep reports mean-gap-field breakdown and corona-onset margins."""
     df = sweeps.sweep_gap(P, d_min=0.008, d_max=0.020, n=21)
     _is_nonempty(
-        df, {"d_gap_mm", "V_onset_kV", "thrust_N", "air_breakdown_margin", "corona_onset_margin"}
+        df,
+        {
+            "d_gap_mm",
+            "V_onset_kV",
+            "thrust_N",
+            "mean_gap_breakdown_margin",
+            "corona_onset_margin",
+        },
     )
-    # Wider gap -> lower mean field -> larger air-breakdown margin (monotone up).
-    margin = df["air_breakdown_margin"].to_numpy()
+    # Wider gap -> lower mean field -> larger breakdown margin (monotone up).
+    margin = df["mean_gap_breakdown_margin"].to_numpy()
     assert np.all(np.diff(margin) > 0)
     # Margins are positive and finite for the swept operating point.
     assert np.all(margin > 0)
@@ -82,9 +89,9 @@ def test_sweep_capacitance_droop_decreases() -> None:
 def test_sweep_stages_columns_and_noload_increases() -> None:
     """Stage sweep is non-empty; no-load output rises with N."""
     df = sweeps.sweep_stages(P, n_min=3, n_max=8)
-    _is_nonempty(df, {"N_stages", "droop_V", "droop_pct", "ripple_Vpp", "V_out_noload_kV"})
+    _is_nonempty(df, {"N_stages", "droop_V", "droop_pct", "ripple_Vpp", "V_out_noload_ref_kV"})
     assert list(df["N_stages"]) == [3, 4, 5, 6, 7, 8]
-    v_out = df["V_out_noload_kV"].to_numpy()
+    v_out = df["V_out_noload_ref_kV"].to_numpy()
     assert np.all(np.diff(v_out) > 0)
     # More stages -> more droop and more ripple (monotone up).
     assert np.all(np.diff(df["droop_pct"].to_numpy()) > 0)

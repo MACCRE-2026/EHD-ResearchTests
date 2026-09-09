@@ -83,7 +83,7 @@ def _operating_point(p: DesignParameters) -> dict[str, float]:
     thrust_gf = physics.thrust_grams_force(thrust_n)
     eff = physics.efficiency_N_per_kW(thrust_n, power)
     onset_margin = physics.corona_onset_margin(p.V_op, v_onset)
-    breakdown_margin = physics.air_breakdown_margin(p.V_op, p.d_gap_m)
+    breakdown_margin = physics.mean_gap_breakdown_margin(p.V_op, p.d_gap_m)
     droop = physics.cw_voltage_droop(i_ion, p.f_sw, p.C_stage, p.N_stages)
     ripple = physics.cw_ripple_pp(i_ion, p.f_sw, p.C_stage, p.N_stages)
     return {
@@ -96,7 +96,7 @@ def _operating_point(p: DesignParameters) -> dict[str, float]:
         "thrust_gf": thrust_gf,
         "efficiency_N_per_kW": eff,
         "corona_onset_margin": onset_margin,
-        "air_breakdown_margin": breakdown_margin,
+        "mean_gap_breakdown_margin": breakdown_margin,
         "droop_V": droop,
         "droop_pct": (droop / p.V_op * 100.0) if p.V_op > 0 else 0.0,
         "ripple_Vpp": ripple,
@@ -168,7 +168,7 @@ def sweep_gap(
     -------
     pandas.DataFrame
         Columns include ``d_gap_mm``, ``V_onset_kV``, ``thrust_N``,
-        ``air_breakdown_margin``, ``corona_onset_margin``, ``I_ion_mA``.
+        ``mean_gap_breakdown_margin``, ``corona_onset_margin``, ``I_ion_mA``.
     """
     p = p or DesignParameters()
     rows = []
@@ -229,26 +229,33 @@ def sweep_stages(
 ) -> pd.DataFrame:
     """Sweep CW stage count; return droop%, ripple, and no-load output vs N.
 
-    The Cockcroft-Walton no-load output for a symmetric cascade fed by peak
-    transformer voltage ``V_op`` is ``2 * N * V_op`` (each stage adds ~2x the
-    peak AC input). ``V_op`` here is used as the per-stage peak input reference.
+    The Cockcroft-Walton no-load output for a symmetric cascade is
+    ``2 * N * V_peak`` where ``V_peak`` is the **rectified secondary peak AC
+    voltage feeding the multiplier** (each stage adds ~2x that peak). Here we do
+    NOT have a separate secondary-peak parameter, so this column reuses ``V_op``
+    (the 22 kV DC operating point) purely as a *per-stage peak reference* to
+    show the ``2*N`` scaling trend. It is therefore labeled
+    ``V_out_noload_ref_kV`` and is a scaling reference, not the physical
+    multiplier output for this design (which is ``V_op`` by construction). Feed
+    the true secondary peak to interpret it as an absolute no-load output.
 
     Returns
     -------
     pandas.DataFrame
         Columns include ``N_stages``, ``droop_V``, ``droop_pct``,
-        ``ripple_Vpp``, ``V_out_noload_kV``, ``I_ion_mA``.
+        ``ripple_Vpp``, ``V_out_noload_ref_kV``, ``I_ion_mA``.
     """
     p = p or DesignParameters()
     rows = []
     for n_stage in range(n_min, n_max + 1):
         pp = _replace(p, N_stages=int(n_stage))
         op = _operating_point(pp)
-        v_out_noload = 2.0 * n_stage * p.V_op
+        # V_op stands in as the per-stage peak reference; see docstring.
+        v_out_noload_ref = 2.0 * n_stage * p.V_op
         rows.append(
             {
                 "N_stages": n_stage,
-                "V_out_noload_kV": v_out_noload / 1e3,
+                "V_out_noload_ref_kV": v_out_noload_ref / 1e3,
                 **op,
             }
         )
@@ -378,12 +385,12 @@ def run_all(p: DesignParameters | None = None, output_dir: Path = DEFAULT_OUTPUT
         sweep_gap(p),
         "sweep_gap",
         "d_gap_mm",
-        ["air_breakdown_margin", "corona_onset_margin"],
-        "Air-breakdown and corona-onset margins vs gap",
+        ["mean_gap_breakdown_margin", "corona_onset_margin"],
+        "Mean-gap-field breakdown and corona-onset margins vs gap",
         "d_gap [mm]",
         "margin [dimensionless]",
         output_dir=output_dir,
-        caption="air_breakdown_margin = 3 MV/m / (V/d); corona_onset_margin = V_op / V_onset.",
+        caption="mean_gap_breakdown_margin = 3 MV/m / (V/d); corona_onset_margin = V_op / V_onset.",
     )
     written += [csv, png]
 

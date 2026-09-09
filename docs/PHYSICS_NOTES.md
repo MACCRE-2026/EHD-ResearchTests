@@ -14,7 +14,7 @@ values quoted below are reproduced live by `python -m ehdpsu.sanity`.
 
 Base design parameters used throughout: r_wire = 25 um, gap d = 12 mm,
 wire length L = 15 cm, V_op = 22 kV, f_sw = 250 kHz, N = 5 CW stages,
-C_stage = 1 nF, ion mobility mu ~ 2.0e-4 m^2/(V*s) (air).
+C_stage = 1 nF, ion mobility mu ~ 1.5e-4 m^2/(V*s) (air).
 
 ---
 

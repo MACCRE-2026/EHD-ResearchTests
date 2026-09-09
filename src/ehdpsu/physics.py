@@ -435,10 +435,10 @@ def mean_gap_field(V_op: float, d_gap_m: float) -> float:
     return V_op / d_gap_m
 
 
-def air_breakdown_margin(
+def mean_gap_breakdown_margin(
     V_op: float, d_gap_m: float, e_breakdown: float = AIR_BREAKDOWN_FIELD
 ) -> float:
-    """Return the air-breakdown safety margin ``E_breakdown / (V/d)`` (dimensionless).
+    """Return the mean-gap-field breakdown margin ``E_breakdown / (V/d)`` (dimensionless).
 
     ::
 
@@ -506,8 +506,8 @@ def corona_onset_margin(V_op: float, V_onset: float) -> float:
     Assumptions / caveats
     ---------------------
     Purely the ratio of operating to inception voltage; it says nothing about
-    the streamer/spark upper limit, which the air-breakdown margin
-    (:func:`air_breakdown_margin`) addresses.
+    the streamer/spark upper limit, which the mean-gap-field breakdown margin
+    (:func:`mean_gap_breakdown_margin`) addresses.
     """
     if V_onset <= 0:
         return math.inf
