@@ -68,6 +68,11 @@ from dataclasses import dataclass
 EPS0: float = 8.854e-12  # Vacuum permittivity [F/m]
 G_EARTH: float = 9.81  # Standard gravity [m/s^2]
 
+# Uniform-field dielectric strength of air at STP. The classic engineering
+# figure is ~30 kV/cm = 3.0 MV/m (dry air, sea-level, uniform field, cm-scale
+# gaps). See Kuffel & Zaengl, HV Engineering, and any Paschen-curve reference.
+AIR_BREAKDOWN_FIELD: float = 3.0e6  # [V/m] (~30 kV/cm)
+
 
 @dataclass(frozen=True)
 class DesignParameters:
@@ -401,6 +406,112 @@ def efficiency_N_per_kW(thrust_n: float, power_w: float) -> float:
     if power_w > 0:
         return (thrust_n / power_w) * 1000.0
     return 0.0
+
+
+def mean_gap_field(V_op: float, d_gap_m: float) -> float:
+    """Return the mean (uniform-approximation) gap field ``V/d`` [V/m].
+
+    Parameters
+    ----------
+    V_op : float
+        Operating voltage [V].
+    d_gap_m : float
+        Gap distance [m].
+
+    Returns
+    -------
+    float
+        Mean gap field [V/m].
+
+    Assumptions / caveats
+    ---------------------
+    This is the *spatially averaged* field ``V/d``. The real wire-to-plane
+    field is highly non-uniform (very high at the wire, low mid-gap), so the
+    local field at the emitter greatly exceeds this average. The mean field is
+    nonetheless the right quantity to compare against the bulk uniform-field air
+    breakdown strength (:data:`AIR_BREAKDOWN_FIELD`) for a whole-gap arc-over
+    (sparkover) sanity check.
+    """
+    return V_op / d_gap_m
+
+
+def air_breakdown_margin(
+    V_op: float, d_gap_m: float, e_breakdown: float = AIR_BREAKDOWN_FIELD
+) -> float:
+    """Return the air-breakdown safety margin ``E_breakdown / (V/d)`` (dimensionless).
+
+    ::
+
+        margin = e_breakdown / (V_op / d_gap)
+
+    A margin ``> 1`` means the mean gap field is below the bulk air breakdown
+    strength (no full-gap sparkover expected on average); ``< 1`` means the mean
+    field exceeds it and a whole-gap arc is likely.
+
+    Parameters
+    ----------
+    V_op : float
+        Operating voltage [V].
+    d_gap_m : float
+        Gap distance [m].
+    e_breakdown : float
+        Uniform-field air breakdown strength [V/m]. Defaults to
+        :data:`AIR_BREAKDOWN_FIELD` (~3 MV/m = ~30 kV/cm at STP).
+
+    Returns
+    -------
+    float
+        Dimensionless safety margin. ``inf`` when ``V_op <= 0``.
+
+    Assumptions / caveats
+    ---------------------
+    Compares the *mean* gap field ``V/d`` (see :func:`mean_gap_field`) against
+    the STP uniform-field breakdown figure ~30 kV/cm (3 MV/m). This is a
+    coarse whole-gap sparkover check: because the wire-to-plane field is
+    non-uniform, corona onset (see :func:`corona_inception_voltage`) occurs at
+    the wire well *before* the mean field reaches this value. A margin above 1
+    therefore does not guarantee corona-free operation; it guards against gross
+    gap arc-over. Reference: Kuffel & Zaengl (air breakdown ~30 kV/cm STP).
+    """
+    field = mean_gap_field(V_op, d_gap_m)
+    if field <= 0:
+        return math.inf
+    return e_breakdown / field
+
+
+def corona_onset_margin(V_op: float, V_onset: float) -> float:
+    """Return the corona onset margin ``V_op / V_onset`` (dimensionless).
+
+    ::
+
+        margin = V_op / V_onset
+
+    A margin ``> 1`` means the supply is driving the emitter above corona
+    inception (the intended operating regime); ``< 1`` means no corona (and thus
+    no ion current / thrust). Larger values drive more current but push toward
+    streamer/spark transition.
+
+    Parameters
+    ----------
+    V_op : float
+        Operating voltage [V].
+    V_onset : float
+        Corona-inception voltage [V] (see :func:`corona_inception_voltage`).
+
+    Returns
+    -------
+    float
+        Dimensionless onset margin. ``inf`` when ``V_onset <= 0``.
+
+    Assumptions / caveats
+    ---------------------
+    Purely the ratio of operating to inception voltage; it says nothing about
+    the streamer/spark upper limit, which the air-breakdown margin
+    (:func:`air_breakdown_margin`) addresses.
+    """
+    if V_onset <= 0:
+        return math.inf
+    return V_op / V_onset
 
 
 def cw_voltage_droop(I_load: float, f_sw: float, C_stage: float, N_stages: int) -> float:
