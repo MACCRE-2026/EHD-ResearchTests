@@ -1,0 +1,29 @@
+EHD wire-to-collector FEMM cell -- geometry and expected outputs
+================================================================
+
+Run ehd_wire_collector.lua in FEMM (Windows GUI). This file just
+documents what the script builds and what to read back.
+
+Geometry (2-D cross-section, out-of-plane depth = wire length):
+  emitter wire radius r_wire = 0.025 mm (25.0 um)
+  emitter-to-collector gap d_gap = 12 mm
+  out-of-plane depth (L_wire)   = 150 mm (15.0 cm)
+  emitter conductor potential   = 22000.0 V (V_op)
+  collector conductor potential = 0 V
+  air material: relative permittivity 1; outer boundary fixed at 0 V.
+
+Expected outputs to read back from FEMM:
+  1) Peak wire-surface field |E|_max [V/m].
+     Analytical Peek onset field  E_peek = 1.776e+07 V/m (17.757 MV/m).
+     Analytical corona onset      V_onset = 2741 V (2.74 kV).
+     Mean gap field (V/d)         = 1.833e+06 V/m (1.833 MV/m).
+     FEMM's |E|_max at the wire should be close to E_peek (Laplace,
+     no space charge). Large disagreement means a meshing or
+     geometry-scale problem (refine mesh / enlarge outer boundary).
+  2) Cell capacitance C [F].
+     From stored energy W:   C = 2 * W / V_op^2.
+     From emitter charge Q:  C = Q / V_op.
+     The two routes should agree; C is the whole-cell value at the
+     depth set in ei_probdef.
+
+Caveat: FEMM solves the electrostatic (Laplace) field with NO space charge, so the peak wire-surface field it reports is the CORONA-ONSET field to compare against Peek's law, not the loaded operating field (ion space charge lowers the near-wire field once current flows).
