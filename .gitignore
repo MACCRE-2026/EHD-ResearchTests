@@ -1,0 +1,22 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Generated outputs (keep the directory via .gitkeep)
+outputs/*.csv
+outputs/*.png
+!outputs/.gitkeep
+
+# Generated artifacts are regenerable; keep the directory via .gitkeep.
+# Small example artifacts may be force-added explicitly when needed.
+!artifacts/.gitkeep
