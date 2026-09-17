@@ -1402,3 +1402,70 @@ never been reachable.
   - **No solver has been run.** `artifacts/05_Solver_Runs/` is empty and every number in the project
     is still `claimed` or `analytical-placeholder`.
   - **The result-file format has still never been written by a human at a bench.**
+
+### 2026-09-16 — the three tool versions, observed; and QSPICE has no version number
+
+Closes the outstanding half of 13.0. Recorded here because these strings are what the run records in
+13.1 and 13.2 will carry, and because one of them is a trap.
+
+- **Status:** COMPLETED for version capture. 13.1 and 13.2 are ready to run.
+- **Files:** `src/ehdpsu/detect.py` (`TOOLS_WITHOUT_A_VERSION_PROBE` reasons for `ltspice` and
+  `qspice` amended with what was observed). Untracked: three filled result-file skeletons in
+  `artifacts/05_Solver_Runs/`.
+- **Evidence — observed from each application, not inferred:**
+  - **FEMM**, Help → About: `femm 4.2` / `Apr 21 2019 (x64)`, David Meeker. **This confirms the
+    21Apr2019 stable build**, which is exactly what the install procedure specified rather than the
+    22Oct2023 development build. The dialog's `Copyright (C) 1998-2015` predates the build date and is
+    not a discrepancy worth chasing.
+  - **LTspice**: `26.0.2.1`, read from `HKCU\Software\Analog Devices Inc.\LTspice\Version` rather than
+    from a dialog. More authoritative than an About box for the reason that matters — it is written by
+    the installer, not typed by a human — and it agrees with ADI's published manifest for 26.0.2.
+  - **QSPICE**: **no version number exists.** Its About box reports a **build timestamp per binary**,
+    and the four differ:
+    - `QUX.exe Build Sep 13 2026 09:32:29` — the GUI
+    - `QSPICE64.exe Build Sep 11 2026 08:03:48` — **the simulation engine**
+    - `QSPICE80.exe Build Sep 11 2026 08:02:04` — the 80-bit-arithmetic engine
+    - `QPOST.exe Build Sep 9 2026 07:38:30` — the post-processor
+- **The trap, recorded because it is exactly the shape this project keeps meeting.** `QUX.exe` is
+  listed **first** in QSPICE's About box and carries the **newest** timestamp, and it is the GUI. A
+  reader asked for "the QSPICE version" naturally takes the first line, which identifies the wrong
+  binary — and the wrong one by two days, so the resulting record would look entirely plausible.
+  *Principle 2, an approximately-correct identifier is worse than an absent one*: a run record naming
+  the GUI's build cannot be used to reproduce a computation the engine performed.
+  - **Decision: the engine's build is what a run record carries.** `QSPICE64.exe Build Sep 11 2026
+    08:03:48`. The post-processor cannot change a computed value, only what gets read off it, so if
+    values were exported through QPOST that belongs in the record's `note` rather than in
+    `tool_version`.
+  - Rejected: a composite string naming all four. `tool_version` is one field and its job is to
+    identify **the binary that produced the numbers**. Four timestamps in one field is a record nobody
+    can compare against another run.
+  - Rejected: extending the result-file format to allow several version lines. The format has still
+    never been used at a bench; widening it before its first real use would be designing against an
+    imagined requirement.
+- **Decision: versions are NOT cached in `tools.local.json`.** The config holds paths only. A cached
+  version goes stale the moment a tool auto-updates — and LTspice updates itself by default — after
+  which every run record would carry a version somebody's config believed was installed. That is the
+  precise wording `solver-provenance` forbids: *tool identity and version, captured from the tool
+  itself. Not the version someone believed was installed.* So the version is transcribed into each
+  result file at run time, where it is a statement about that run.
+- **Evidence — the format was exercised before being handed over.** Three skeletons were generated
+  into `artifacts/05_Solver_Runs/` with `tool_version` and `input_sha256` pre-filled, then parsed:
+  - filled with plausible values, all three parse, and the version strings survive **verbatim**
+    including the double space in `femm 4.2  Apr 21 2019 (x64)`;
+  - **unfilled, all three are refused**, each naming the first empty field.
+  - The hashes were **generated, never typed** — `ehd_wire_collector.lua`
+    `b75240f1…95601` (5,920 B), `ehd_llc_cw.asc` `7c29be2e…5328` (432 B), `ehd_llc_cw.cir`
+    `718ba4a3…2722` (4,684 B). Asking an operator to hand-copy a 64-character digest would be
+    inviting the transcription error that `record_from_parsed` then rejects.
+- **Inherited:**
+  - **A skeleton generator belongs in the CLI and does not exist.** These three were produced by a
+    one-off computation so 13.1 could start immediately. The durable form is a verb —
+    `ehdsuite runrecord <tool>` — that locates the input, hashes it and emits the skeleton. Without it,
+    every regeneration of a solver input needs this done by hand again, and the hash is exactly the
+    field that must not be hand-carried. **Recorded as the next CLI feature request**, class A.
+  - **The skeletons are untracked**, in the ignored datacenter, so they do not exist in a clone. The
+    format itself is in `adapters/base.py` and is tracked.
+  - **No solver has been run.** Every number in the project is still `claimed` or
+    `analytical-placeholder`, and nothing may be called validated.
+  - **LTspice auto-updates by default.** If it updates between now and the run, the registry version
+    changes and the skeleton's line goes stale. Re-read the key rather than trusting the skeleton.

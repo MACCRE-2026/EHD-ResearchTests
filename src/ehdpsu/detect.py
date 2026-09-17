@@ -234,8 +234,20 @@ TOOLS_WITHOUT_A_VERSION_PROBE: dict[str, str] = {
         "GUI-driven; asking femm.exe for a version launches it. The version comes from the operator "
         "and is recorded in the solver-run provenance instead."
     ),
-    "ltspice": "GUI-driven, and LTspice has no documented version-and-exit switch.",
-    "qspice": "GUI-driven; QSPICE64.exe expects a netlist argument, not a version query.",
+    "ltspice": (
+        "GUI-driven, with no documented version-and-exit switch. Its installer does however record "
+        "the version in the registry - HKCU\\Software\\Analog Devices Inc.\\LTspice\\Version read "
+        "26.0.2.1 on 2026-09-16 - so this tool IS identifiable without launching it, and the "
+        "app-registry detection route noted in the ledger would capture it."
+    ),
+    "qspice": (
+        "GUI-driven, and QSPICE has no version number to ask for. Observed 2026-09-16: its About "
+        "box reports a BUILD TIMESTAMP PER BINARY, and the four differ - QUX.exe Sep 13 2026, "
+        "QSPICE64.exe and QSPICE80.exe Sep 11 2026, QPOST.exe Sep 9 2026. The engine is "
+        "QSPICE64.exe, so its build is the one a run record must carry. QUX.exe is listed first and "
+        "is the newest, which makes the GUI's timestamp the line a reader naturally grabs and the "
+        "wrong one to record."
+    ),
     "elmer": (
         "NOT VERIFIED, and left unprobed deliberately. ElmerSolver's behaviour when invoked without "
         "a .sif file is not established here, and a wrong switch risks a solver that waits on input "
