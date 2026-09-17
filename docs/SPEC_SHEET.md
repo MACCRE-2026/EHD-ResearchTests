@@ -12,9 +12,9 @@ All numbers below are reproduced by running the toolkit:
 
 ```bash
 python -m ehdpsu.sanity     # reference operating point + validation notes
-python -m ehdpsu.sweeps     # outputs/sweep_*.csv + *.png (safety margins)
-python -m ehdpsu.spice      # artifacts/ehd_llc_cw.cir (+ .asc)
-python -m ehdpsu.femm       # artifacts/ehd_wire_collector.lua (+ notes)
+python -m ehdpsu.sweeps     # artifacts/07_Outputs/sweep_*.csv + *.png (safety margins)
+python -m ehdpsu.spice      # solver_inputs/ehd_llc_cw.cir (+ .asc)
+python -m ehdpsu.femm       # solver_inputs/ehd_wire_collector.lua (+ notes)
 python -m ehdpsu.telemetry --input tests/data/example_telemetry.csv
 ```
 
@@ -32,7 +32,7 @@ GS66504B class) or 650 V superjunction MOSFETs for the half-bridge legs.
 **Ratings justification.**
 
 - **Voltage:** the netlist drives the half-bridge from `Vbus = 400 V`
-  (`Vbus vbus 0 DC 400.0` in `artifacts/ehd_llc_cw.cir`). A 600-650 V device
+  (`Vbus vbus 0 DC 400.0` in `solver_inputs/ehd_llc_cw.cir`). A 600-650 V device
   gives ~1.5x margin over the 400 V rail, adequate for hard/soft-switched LLC
   ringing.
 - **Current / power:** the burst budget is ~80-120 W (confirmed by the
@@ -45,8 +45,8 @@ GS66504B class) or 650 V superjunction MOSFETs for the half-bridge legs.
   (`Vg_hi`/`Vg_lo` PULSE sources). GaN's low Qg/Coss favors the soft-switching
   LLC operation and keeps gate-drive losses low at this frequency.
 
-**Supporting files:** `artifacts/ehd_llc_cw.cir` (`Vbus`, gate `PULSE` sources,
-`M1`/`M2` switches, `.model SW`); `outputs/example_telemetry_derived.csv` and
+**Supporting files:** `solver_inputs/ehd_llc_cw.cir` (`Vbus`, gate `PULSE` sources,
+`M1`/`M2` switches, `.model SW`); `artifacts/07_Outputs/example_telemetry_derived.csv` and
 the telemetry burst summary for the real burst power envelope.
 
 ---
@@ -56,7 +56,7 @@ the telemetry burst summary for the real burst power envelope.
 **Selection:** PQ26/20 ferrite core (N87/3C95 class), litz primary, layered /
 sectioned HV secondary.
 
-**Targets from the SPICE model (`artifacts/ehd_llc_cw.cir`).**
+**Targets from the SPICE model (`solver_inputs/ehd_llc_cw.cir`).**
 
 | Parameter | Netlist value | Meaning / target |
 | --- | --- | --- |
@@ -76,7 +76,7 @@ free-fit values. `C_sec` is called out explicitly because HV secondary
 self-capacitance detunes the tank and rounds the CW drive edges; the netlist
 comments instruct measuring it on the wound part.
 
-**Supporting files:** `artifacts/ehd_llc_cw.cir` (`Lr`, `Cr`, `Lm`, `L_pri`,
+**Supporting files:** `solver_inputs/ehd_llc_cw.cir` (`Lr`, `Cr`, `Lm`, `L_pri`,
 `L_sec`, `K_xfmr`, `C_sec`), plus the module's printed "how the model maps to
 real parts" notes from `python -m ehdpsu.spice`.
 
@@ -107,11 +107,11 @@ stacked fast diode or a series string of 2-3 kV ultrafast parts per position.
 study confirms droop and ripple scale as `1/C`, so a larger cap directly buys
 lower droop if board area allows.
 
-**Supporting files:** `artifacts/ehd_llc_cw.cir` (`.model DHV`, the `Cc*`/`Cs*`
-1 nF ladder, `Dd*` diodes); `outputs/sweep_capacitance.csv` /
-`sweep_capacitance.png` (ripple/droop vs C); `outputs/sweep_stages.csv` /
+**Supporting files:** `solver_inputs/ehd_llc_cw.cir` (`.model DHV`, the `Cc*`/`Cs*`
+1 nF ladder, `Dd*` diodes); `artifacts/07_Outputs/sweep_capacitance.csv` /
+`sweep_capacitance.png` (ripple/droop vs C); `artifacts/07_Outputs/sweep_stages.csv` /
 `sweep_stages.png` (droop grows as N^3: 445.5 V at N=5, rising to ~1.74 kV at
-N=8, confirming N=5 as a sound choice); `outputs/sweep_frequency.csv` (ripple
+N=8, confirming N=5 as a sound choice); `artifacts/07_Outputs/sweep_frequency.csv` (ripple
 falls as 1/f, justifying the 250 kHz choice).
 
 ---
@@ -124,13 +124,13 @@ gap, ~15 cm wire length.
 **Ratings justification (from the sweeps).**
 
 - **Corona onset margin** at the 22 kV operating point is **~8.0** (V_op /
-  V_onset = 22 kV / 2.74 kV), from `outputs/sweep_voltage.csv`. The design runs
+  V_onset = 22 kV / 2.74 kV), from `artifacts/07_Outputs/sweep_voltage.csv`. The design runs
   well above corona inception, as intended.
 - **Air-breakdown margin** at the base 12 mm gap / 22 kV is **~1.64** (mean gap
   field V/d vs ~3 MV/m ~ 30 kV/cm bulk-air breakdown), from
-  `outputs/sweep_gap.csv` and `sweep_voltage.csv`.
+  `artifacts/07_Outputs/sweep_gap.csv` and `sweep_voltage.csv`.
 - **Watch item:** at the **8 mm gap end with V_op = 22 kV the air-breakdown
-  margin collapses to ~1.09** (`outputs/sweep_gap.csv`, first row: mean gap
+  margin collapses to ~1.09** (`artifacts/07_Outputs/sweep_gap.csv`, first row: mean gap
   field ~2.75 MV/m against ~3 MV/m breakdown). Running that tight a gap at full
   voltage puts the mean gap field within ~9% of bulk-air breakdown, i.e. at real
   risk of arc-over. **Keep the gap at ~12 mm (or larger) at 22 kV**, or reduce
@@ -142,10 +142,10 @@ gap, ~15 cm wire length.
   start) at the cost of faster erosion; 25-50 um tungsten balances erosion life
   against onset.
 
-**Supporting files:** `outputs/sweep_gap.csv` / `sweep_gap.png` (the 8 mm ~1.09
-margin), `outputs/sweep_voltage.csv` / `sweep_voltage.png` (margins vs voltage),
-`outputs/sweep_wire_radius.csv` / `sweep_wire_radius.png` (E_peek/onset vs wire
-radius), and `artifacts/ehd_wire_collector.lua` /
+**Supporting files:** `artifacts/07_Outputs/sweep_gap.csv` / `sweep_gap.png` (the 8 mm ~1.09
+margin), `artifacts/07_Outputs/sweep_voltage.csv` / `sweep_voltage.png` (margins vs voltage),
+`artifacts/07_Outputs/sweep_wire_radius.csv` / `sweep_wire_radius.png` (E_peek/onset vs wire
+radius), and `solver_inputs/ehd_wire_collector.lua` /
 `ehd_wire_collector_geometry.txt` (FEMM electrostatics cross-check: the
 solver's peak wire-surface field should match the analytical E_peek = 17.76
 MV/m).
@@ -172,7 +172,7 @@ bus/current ranges comfortably cover these values. This closes the loop:
 measured thrust/power can be compared against the physics-model upper bound.
 
 **Supporting files:** `tests/data/example_telemetry.csv` (ESP32 schema),
-`outputs/example_telemetry_derived.csv`, `example_telemetry_thrust_power.png`,
+`artifacts/07_Outputs/example_telemetry_derived.csv`, `example_telemetry_thrust_power.png`,
 `example_telemetry_efficiency.png`.
 
 ---

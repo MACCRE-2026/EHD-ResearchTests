@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "profile_id": "mk0_benchtop_22kv",
+  "title": "MK0 benchtop single-cell EHD thruster and 5-stage CW multiplier, 22 kV",
+  "provenance": {
+    "created": "2026-09-15",
+    "origin": "Generated from the MK0 defaults previously hardcoded in physics.DesignParameters and spice.SpiceParams, which reproduced the original sanity-check script exactly.",
+    "supersedes": "physics.DesignParameters defaults, spice.SpiceParams defaults, and the 'cap = 1n' literal in the generated netlist text.",
+    "basis_note": "Every field is 'claimed'. A design choice is an assertion until the built article is measured, and the environment fields are literature values. Low-water-mark therefore makes every quantity derived from this profile 'claimed' -- one tier below the 'analytical-placeholder' recorded in the MK0 BreadCrumb retrospective, which modelled the provenance of the formulas and not of the inputs. The lower ceiling is the correct figure.",
+    "measured_fields": "None. No field has been measured on hardware. When one is, its basis becomes 'measured' and the ceiling rises only for quantities not descending from the remaining claimed inputs."
+  },
+  "design": {
+    "emitter": {
+      "r_wire_m": {
+        "value": 2.5e-05,
+        "unit": "m",
+        "basis": "claimed",
+        "kind": "choice",
+        "note": "25 um tungsten, read as a RADIUS. Both readings exist in this project's source material; as a diameter V_onset would be 1.63 kV rather than 2.74 kV."
+      },
+      "L_wire_m": {
+        "value": 0.15,
+        "unit": "m",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "m_rough_factor": {
+        "value": 0.8,
+        "unit": "1",
+        "basis": "claimed",
+        "kind": "choice",
+        "refs": [
+          "Peek 1929"
+        ],
+        "note": "0.8 for practical drawn wire, not 1.0 polished."
+      }
+    },
+    "gap": {
+      "d_gap_m": {
+        "value": 0.012,
+        "unit": "m",
+        "basis": "claimed",
+        "kind": "choice"
+      }
+    },
+    "environment": {
+      "delta_air_density": {
+        "value": 1.0,
+        "unit": "1",
+        "basis": "claimed",
+        "kind": "property",
+        "note": "Sea-level standard air assumed; not measured."
+      },
+      "mu_ion_m2_per_Vs": {
+        "value": 0.00015,
+        "unit": "m^2/(V*s)",
+        "basis": "claimed",
+        "kind": "property",
+        "refs": [
+          "Kuffel & Zaengl p.366"
+        ],
+        "note": "Literature value for positive ions in air. Unverified in this apparatus."
+      }
+    },
+    "supply": {
+      "V_op_V": {
+        "value": 22000.0,
+        "unit": "V",
+        "basis": "claimed",
+        "kind": "choice",
+        "note": "MK0 benchtop operating point."
+      }
+    },
+    "multiplier": {
+      "f_sw_Hz": {
+        "value": 250000.0,
+        "unit": "Hz",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "N_stages": {
+        "value": 5,
+        "unit": "count",
+        "basis": "claimed",
+        "kind": "choice",
+        "note": "Droop grows as N^3: 445.5 V at N=5, ~1.74 kV at N=8."
+      },
+      "C_stage_F": {
+        "value": 1e-09,
+        "unit": "F",
+        "basis": "claimed",
+        "kind": "choice"
+      }
+    },
+    "driver": {
+      "V_bus_V": {
+        "value": 400.0,
+        "unit": "V",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "L_r_H": {
+        "value": 6e-05,
+        "unit": "H",
+        "basis": "claimed",
+        "kind": "choice",
+        "note": "Also carries transformer primary leakage in this lumped model."
+      },
+      "C_r_F": {
+        "value": 6.8e-09,
+        "unit": "F",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "L_m_H": {
+        "value": 0.0003,
+        "unit": "H",
+        "basis": "claimed",
+        "kind": "choice",
+        "note": "Lm/Lr ~ 5 here; an LLC typically wants 3-10."
+      },
+      "L_sec_H": {
+        "value": null,
+        "unit": "H",
+        "basis": "claimed",
+        "kind": "choice",
+        "note": "Derived as L_m_H * turns_ratio_sec_per_pri^2. This was a 0.0 sentinel in SpiceParams; an explicit null cannot be mistaken for a real inductance."
+      },
+      "k_coupling": {
+        "value": 0.98,
+        "unit": "1",
+        "basis": "claimed",
+        "kind": "choice",
+        "note": "Remaining leakage is lumped into L_r_H."
+      },
+      "C_sec_F": {
+        "value": 4.7e-11,
+        "unit": "F",
+        "basis": "claimed",
+        "kind": "choice",
+        "note": "HF HV windings on a PQ26/20 show tens of pF."
+      },
+      "turns_ratio_sec_per_pri": {
+        "value": 12.0,
+        "unit": "1",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "deadtime_frac": {
+        "value": 0.02,
+        "unit": "1",
+        "basis": "claimed",
+        "kind": "choice"
+      }
+    },
+    "rectifier": {
+      "diode_BV_V": {
+        "value": 20000.0,
+        "unit": "V",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "diode_Cjo_F": {
+        "value": 2e-12,
+        "unit": "F",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "diode_Rs_ohm": {
+        "value": 25.0,
+        "unit": "ohm",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "diode_tt_s": {
+        "value": 5e-09,
+        "unit": "s",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "diode_Is_A": {
+        "value": 5e-09,
+        "unit": "A",
+        "basis": "claimed",
+        "kind": "choice"
+      },
+      "diode_n": {
+        "value": 2.0,
+        "unit": "1",
+        "basis": "claimed",
+        "kind": "choice"
+      }
+    }
+  }
+}

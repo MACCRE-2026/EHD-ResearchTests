@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "The Gate (after each agent turn)",
+      "trigger": "Stop",
+      "description": "Runs the full verification Gate after every agent turn at zero model cost. Exits non-zero if any stage fails, if mypy examined zero files, or if the pytest collected count falls below its floor.",
+      "action": {
+        "type": "command",
+        "command": "pwsh -NoProfile -File \"B:\\EHD-ResearchTests\\.kiro\\governance\\gate.ps1\"",
+        "timeout": 600
+      }
+    }
+  ]
+}

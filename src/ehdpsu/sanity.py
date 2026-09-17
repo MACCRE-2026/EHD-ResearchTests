@@ -23,12 +23,12 @@ All printing lives here (not in :mod:`ehdpsu.physics`, which is pure).
 from __future__ import annotations
 
 from . import physics
-from .physics import DesignParameters
+from .physics import default_design
 
 
 def main() -> None:
     """Print the reproduced sanity-check sections plus validation notes."""
-    p = DesignParameters()  # original script defaults
+    p = default_design()  # original script defaults
 
     # --- Section 1: electrostatic inception -------------------------------
     e_peek = physics.peek_inception_field(p.r_wire_m, p.delta, p.m_rough)

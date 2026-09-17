@@ -53,28 +53,28 @@ Rsec_gnd sec_n 0 1e-3
 
 * ---------------------------------------------------------------
 * 5-stage Cockcroft-Walton multiplier (half-wave cascade).
-* 1n per-stage caps; ultrafast HV rectifier .model below.
+* Per-stage caps 1e-09 F, from the profile; ultrafast HV rectifier .model below.
 * ---------------------------------------------------------------
-Cc1 sec_p cw_a1 1n
+Cc1 sec_p cw_a1 1e-09
 Dd1a sec_n cw_a1 DHV
 Dd1b cw_a1 cw_b1 DHV
-Cs1 cw_b1 sec_n 1n
-Cc2 sec_p cw_a2 1n
+Cs1 cw_b1 sec_n 1e-09
+Cc2 sec_p cw_a2 1e-09
 Dd2a cw_b1 cw_a2 DHV
 Dd2b cw_a2 cw_b2 DHV
-Cs2 cw_b2 cw_b1 1n
-Cc3 sec_p cw_a3 1n
+Cs2 cw_b2 cw_b1 1e-09
+Cc3 sec_p cw_a3 1e-09
 Dd3a cw_b2 cw_a3 DHV
 Dd3b cw_a3 cw_b3 DHV
-Cs3 cw_b3 cw_b2 1n
-Cc4 sec_p cw_a4 1n
+Cs3 cw_b3 cw_b2 1e-09
+Cc4 sec_p cw_a4 1e-09
 Dd4a cw_b3 cw_a4 DHV
 Dd4b cw_a4 cw_b4 DHV
-Cs4 cw_b4 cw_b3 1n
-Cc5 sec_p cw_a5 1n
+Cs4 cw_b4 cw_b3 1e-09
+Cc5 sec_p cw_a5 1e-09
 Dd5a cw_b4 cw_a5 DHV
 Dd5b cw_a5 cw_b5 DHV
-Cs5 cw_b5 cw_b4 1n
+Cs5 cw_b5 cw_b4 1e-09
 * CW DC output node: cw_b5
 Rout cw_b5 cw_out 1
 

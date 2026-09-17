@@ -4,7 +4,7 @@ Run with::
 
     python -m ehdpsu.femm
 
-This module **generates a FEMM Lua script** (``artifacts/ehd_wire_collector.lua``)
+This module **generates a FEMM Lua script** (``solver_inputs/ehd_wire_collector.lua``)
 that draws the 2-D cross-section of the single EHD thruster cell (a circular
 tungsten emitter wire facing a flat collector) and sets up a FEMM electrostatics
 problem parameterized from :class:`ehdpsu.physics.DesignParameters` (wire radius,
@@ -62,10 +62,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import physics
-from .physics import DesignParameters
+from .physics import DesignParameters, default_design
 
-# Default output directory for generated FEMM artifacts.
-DEFAULT_ARTIFACT_DIR = Path("artifacts")
+# Default output directory for generated FEMM solver inputs.
+#
+# This is a **tracked** directory, deliberately: the generated Lua geometry and its
+# companion notes are small, deterministic text deliverables that a public cloner needs
+# in order to run FEMM locally. They are regenerable, and a test regenerates and diffs
+# them, so tracking them cannot drift silently.
+#
+# Generated *data* (CSVs, plots, solver run output) goes to the untracked project
+# datacenter under ``artifacts/`` instead. Inputs are tracked; outputs are not.
+DEFAULT_ARTIFACT_DIR = Path("solver_inputs")
 
 # Default FEMM artifact filename.
 DEFAULT_LUA_NAME = "ehd_wire_collector.lua"
@@ -110,7 +118,7 @@ def build_lua_script(p: DesignParameters | None = None) -> str:
     str
         The complete FEMM Lua script text (newline-terminated).
     """
-    p = p or DesignParameters()
+    p = p or default_design()
 
     # Analytical cross-check numbers (computed, never fitted).
     e_peek = physics.peek_inception_field(p.r_wire_m, p.delta, p.m_rough)
@@ -281,7 +289,7 @@ def build_geometry_notes(p: DesignParameters | None = None) -> str:
     str
         Plain-text description (newline-terminated).
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     e_peek = physics.peek_inception_field(p.r_wire_m, p.delta, p.m_rough)
     v_onset = physics.corona_inception_voltage(e_peek, p.r_wire_m, p.d_gap_m)
     mean_field = physics.mean_gap_field(p.V_op, p.d_gap_m)
@@ -375,7 +383,7 @@ def write_artifacts(
 
 def main() -> None:
     """Write the FEMM artifact(s) and print their paths plus local-run steps."""
-    p = DesignParameters()
+    p = default_design()
     written = write_artifacts(p, DEFAULT_ARTIFACT_DIR, write_notes=True)
 
     e_peek = physics.peek_inception_field(p.r_wire_m, p.delta, p.m_rough)

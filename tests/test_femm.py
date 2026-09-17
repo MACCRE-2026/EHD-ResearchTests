@@ -19,11 +19,11 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import reference_design
 
 from ehdpsu import femm, physics
-from ehdpsu.physics import DesignParameters
 
-P = DesignParameters()
+P = reference_design()
 
 
 @pytest.fixture

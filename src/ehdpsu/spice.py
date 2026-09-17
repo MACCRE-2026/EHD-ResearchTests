@@ -54,11 +54,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import physics
-from .physics import DesignParameters
+from . import physics, profile
+from .physics import DesignParameters, default_design
+from .profile import Profile
 
-# Default output directory for generated netlist artifacts.
-DEFAULT_ARTIFACT_DIR = Path("artifacts")
+# Default output directory for generated netlist solver inputs.
+#
+# Tracked, for the same reason as in :mod:`ehdpsu.femm`: the netlist is a small,
+# deterministic text deliverable a public cloner needs to run LTspice or QSPICE locally.
+# Generated *data* goes to the untracked datacenter under ``artifacts/``.
+DEFAULT_ARTIFACT_DIR = Path("solver_inputs")
 
 # Static-approximation caveat, embedded verbatim in the generated netlist.
 STATIC_APPROX_CAVEAT = (
@@ -105,8 +110,6 @@ class SpiceParams:
     turns_ratio : float
         Secondary:primary turns ratio (step-up). The CW ladder further
         multiplies the rectified secondary voltage.
-    f_sw_hz : float
-        Switching frequency [Hz]; defaults to the DesignParameters ``f_sw``.
     deadtime_frac : float
         Dead-time as a fraction of the switching period (per edge).
     diode_bv : float
@@ -125,22 +128,63 @@ class SpiceParams:
         HV rectifier emission coefficient.
     """
 
-    v_bus: float = 400.0
-    lr_h: float = 60e-6
-    cr_f: float = 6.8e-9
-    lm_h: float = 300e-6
-    l_sec_h: float = 0.0
-    k_coupling: float = 0.98
-    c_sec_f: float = 47e-12
-    turns_ratio: float = 12.0
-    f_sw_hz: float = 250_000.0
-    deadtime_frac: float = 0.02
-    diode_bv: float = 20_000.0
-    diode_cjo: float = 2e-12
-    diode_rs: float = 25.0
-    diode_tt: float = 5e-9
-    diode_is: float = 5e-9
-    diode_n: float = 2.0
+    # NO DEFAULTS, and NO ``f_sw_hz``. Both were second homes for design values.
+    #
+    # ``f_sw_hz`` duplicated ``DesignParameters.f_sw``, and ``build_netlist`` reconciled them by
+    # silently overwriting whichever one the caller passed in ``sp``. Silently reconciling a
+    # disagreement is worse than reporting it, so the field is gone rather than defended: the
+    # switching frequency now has exactly one home, the profile's ``f_sw_Hz``, reached through
+    # ``DesignParameters.f_sw``.
+    v_bus: float
+    lr_h: float
+    cr_f: float
+    lm_h: float
+    l_sec_h: float
+    k_coupling: float
+    c_sec_f: float
+    turns_ratio: float
+    deadtime_frac: float
+    diode_bv: float
+    diode_cjo: float
+    diode_rs: float
+    diode_tt: float
+    diode_is: float
+    diode_n: float
+
+    @classmethod
+    def from_profile(cls, prof: Profile) -> SpiceParams:
+        """Build netlist parameters from a spec-scope-profile.
+
+        ``l_sec_h`` keeps its ``0.0`` sentinel here because :func:`build_netlist` still reads it
+        that way; the profile stores an explicit ``null`` instead, which cannot be mistaken for a
+        real inductance. The translation happens here, at the boundary, rather than the profile
+        carrying a sentinel it would then have to explain.
+
+        This is the only populating constructor; the dataclass has no defaults.
+        """
+        l_sec = prof.value("L_sec_H")
+        return cls(
+            v_bus=prof.required("V_bus_V"),
+            lr_h=prof.required("L_r_H"),
+            cr_f=prof.required("C_r_F"),
+            lm_h=prof.required("L_m_H"),
+            l_sec_h=0.0 if l_sec is None else float(l_sec),
+            k_coupling=prof.required("k_coupling"),
+            c_sec_f=prof.required("C_sec_F"),
+            turns_ratio=prof.required("turns_ratio_sec_per_pri"),
+            deadtime_frac=prof.required("deadtime_frac"),
+            diode_bv=prof.required("diode_BV_V"),
+            diode_cjo=prof.required("diode_Cjo_F"),
+            diode_rs=prof.required("diode_Rs_ohm"),
+            diode_tt=prof.required("diode_tt_s"),
+            diode_is=prof.required("diode_Is_A"),
+            diode_n=prof.required("diode_n"),
+        )
+
+
+def default_spice_params() -> SpiceParams:
+    """Return netlist parameters from the default profile. Reads a file; the name says so."""
+    return SpiceParams.from_profile(profile.default_profile())
 
 
 @dataclass(frozen=True)
@@ -180,7 +224,7 @@ def ehd_load_model(p: DesignParameters | None = None) -> EhdLoadModel:
     EhdLoadModel
         The resolved ``k`` [A/V^2] and ``v_onset`` [V].
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     e_peek = physics.peek_inception_field(p.r_wire_m, p.delta, p.m_rough)
     v_onset = physics.corona_inception_voltage(e_peek, p.r_wire_m, p.d_gap_m)
     k = physics.geometric_constant_parallel_plate(physics.EPS0, p.mu_ion, p.L_wire_m, p.d_gap_m)
@@ -226,15 +270,18 @@ def _ehd_subckt(model: EhdLoadModel) -> list[str]:
     ]
 
 
-def _llc_primary(sp: SpiceParams) -> list[str]:
+def _llc_primary(sp: SpiceParams, f_sw_hz: float) -> list[str]:
     """Return the LLC half-bridge primary netlist lines.
 
     Two switches (high-side ``M1``, low-side ``M2``) modelled as voltage-
     controlled switches driven by complementary PULSE gate sources at ``f_sw``
     with a per-edge dead-time. The resonant tank is the series ``Lr``/``Cr`` and
     the magnetizing inductance ``Lm`` sits across the transformer primary.
+
+    ``f_sw_hz`` is passed in rather than read from ``sp``, because the switching frequency lives in
+    the profile once and reaches here through ``DesignParameters.f_sw``.
     """
-    period = 1.0 / sp.f_sw_hz
+    period = 1.0 / f_sw_hz
     deadtime = sp.deadtime_frac * period
     # Complementary ~50% duty gate drives with dead-time on both edges.
     half = period / 2.0
@@ -246,7 +293,7 @@ def _llc_primary(sp: SpiceParams) -> list[str]:
         "* ---------------------------------------------------------------",
         "* LLC half-bridge primary",
         (
-            f"* f_sw = {sp.f_sw_hz:.0f} Hz, period = {_eng(period)} s, "
+            f"* f_sw = {f_sw_hz:.0f} Hz, period = {_eng(period)} s, "
             f"dead-time = {_eng(deadtime)} s/edge."
         ),
         "* Ref: Steigerwald, IEEE TPEL 1988 (LLC resonant tank).",
@@ -303,26 +350,36 @@ def _transformer(sp: SpiceParams) -> list[str]:
     ]
 
 
-def _cw_ladder(sp: SpiceParams, n_stages: int) -> list[str]:
+def _cw_ladder(n_stages: int, c_stage_f: float) -> list[str]:
     """Return the N-stage Cockcroft-Walton ladder lines.
 
     Builds a classic half-wave (Greinacher/Villard) voltage-multiplier cascade:
-    each stage adds two 1 nF capacitors and two diodes. The AC drive is the
+    each stage adds two capacitors and two diodes. The AC drive is the
     transformer secondary node ``sec_p`` (relative to the ``sec_n`` ground
     reference). The DC output accumulates at node ``cw_out``.
 
     Parameters
     ----------
-    sp : SpiceParams
-        Netlist parameters (diode model, etc.).
     n_stages : int
         Number of CW stages (each = 2 diodes + 2 capacitors).
+    c_stage_f : float
+        Per-stage capacitance [F], from the profile's ``C_stage_F``.
+
+    Notes
+    -----
+    The capacitance was previously the literal ``"1n"`` here, with a comment stating that it
+    matched ``DesignParameters.C_stage``. That comment was the only thing keeping the two in
+    agreement, which is exactly the generated-netlist case ``profile-seam.md`` names: a design
+    value living inside emitted text. It now comes from the profile, and is formatted with the
+    same :func:`_eng` used for every other value in the netlist rather than a second formatter.
+
+    The ``sp`` parameter was dropped at the same time: it was never read.
     """
-    cap = "1n"  # 1 nF per-stage capacitor (matches DesignParameters.C_stage).
+    cap = _eng(c_stage_f)
     lines: list[str] = [
         "* ---------------------------------------------------------------",
         f"* {n_stages}-stage Cockcroft-Walton multiplier (half-wave cascade).",
-        f"* {cap} per-stage caps; ultrafast HV rectifier .model below.",
+        f"* Per-stage caps {cap} F, from the profile; ultrafast HV rectifier .model below.",
         "* ---------------------------------------------------------------",
     ]
     # AC input to the ladder is sec_p; the "column" nodes are built up per stage.
@@ -388,19 +445,17 @@ def build_netlist(
         Design point; defaults to :class:`DesignParameters`. Supplies ``f_sw``,
         ``N_stages`` and the EHD load ``k`` / ``V_onset``.
     sp : SpiceParams, optional
-        Netlist parameters; defaults to :class:`SpiceParams`. Its ``f_sw_hz`` is
-        overridden by ``p.f_sw`` so the two stay consistent.
+        Netlist parameters; defaults to the profile's driver and rectifier sections. It no longer
+        carries a switching frequency: that lived in two places and was silently reconciled here,
+        and now lives once in the profile.
 
     Returns
     -------
     str
         The complete netlist text (newline-terminated).
     """
-    p = p or DesignParameters()
-    sp = sp or SpiceParams()
-    # Keep the switching frequency consistent with the design parameters.
-    if sp.f_sw_hz != p.f_sw:
-        sp = SpiceParams(**{**sp.__dict__, "f_sw_hz": p.f_sw})
+    p = p or default_design()
+    sp = sp or default_spice_params()
     model = ehd_load_model(p)
 
     lines: list[str] = [
@@ -416,13 +471,13 @@ def build_netlist(
         "* ===============================================================",
         "",
     ]
-    lines += _llc_primary(sp)
+    lines += _llc_primary(sp, p.f_sw)
     lines.append("")
     lines += _transformer(sp)
     lines.append("")
     lines += _diode_model(sp)
     lines.append("")
-    lines += _cw_ladder(sp, p.N_stages)
+    lines += _cw_ladder(p.N_stages, p.C_stage)
     lines.append("")
     lines += _ehd_subckt(model)
     lines.append("")
@@ -462,14 +517,14 @@ def build_asc(p: DesignParameters | None = None, sp: SpiceParams | None = None) 
     str
         LTspice ``.asc`` text.
     """
-    p = p or DesignParameters()
-    sp = sp or SpiceParams()
+    p = p or default_design()
+    sp = sp or default_spice_params()
     model = ehd_load_model(p)
     header = [
         "Version 4",
         "SHEET 1 1600 1080",
         "* LTspice schematic stub generated by ehdpsu.spice.",
-        "* The authoritative circuit is artifacts/ehd_llc_cw.cir; load it via",
+        "* The authoritative circuit is solver_inputs/ehd_llc_cw.cir; load it via",
         "* a .include directive or paste the netlist into an LTspice .cir run.",
     ]
     # Embed the key directives as TEXT elements so they are visible in LTspice.
@@ -526,8 +581,8 @@ def write_artifacts(
 
 def main() -> None:
     """Write the netlist artifact(s) and print their paths plus a mapping note."""
-    p = DesignParameters()
-    sp = SpiceParams()
+    p = default_design()
+    sp = default_spice_params()
     model = ehd_load_model(p)
     written = write_artifacts(p, sp, DEFAULT_ARTIFACT_DIR, write_asc=True)
 

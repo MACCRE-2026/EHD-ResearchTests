@@ -7,7 +7,16 @@ name = "ehdpsu"
 version = "0.1.0"
 description = "Analytical/simulation toolkit to validate a benchtop single-cell EHD (Biefeld-Brown) thruster power supply"
 readme = "README.md"
-requires-python = ">=3.11"
+# Narrowed from ">=3.11" on 2026-09-15.
+#
+# numpy 2.5.3's type stubs use `type` statements, which are syntactically valid only on Python
+# 3.12 and later. mypy cannot parse them while targeting 3.11, and aborts collection -- so under
+# this dependency set, 3.11 support is UNVERIFIABLE rather than merely untested.
+#
+# Claiming a Python version the gate cannot check is exactly the drift that
+# *principle 5, specifications drift from implementations unless mechanically checked*, describes.
+# The honest claim is the one that is checked. Reversible by pinning numpy below 2.3.
+requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "numpy",
@@ -22,7 +31,19 @@ dev = [
     "ruff",
     "black",
     "mypy",
+    # A second whole-codebase type sweep, not a redundant one. On the run that introduced it,
+    # pyright found three errors mypy did not -- including a function in telemetry.py declared to
+    # return DataFrame that could return `DataFrame | Series`, which mypy missed because it infers
+    # pandas loosely under ignore_missing_imports. The Gate asserts both examine the same file set,
+    # because a divergence between them is a blind spot neither reports as a failure.
+    "pyright",
 ]
+
+[project.scripts]
+# The console script is a convenience. `python -m ehdpsu` is the form the documentation uses,
+# because it works as soon as the package is importable -- this entry point only exists after an
+# install regenerates it, so a fresh clone or a half-finished bootstrap would have no command.
+ehdsuite = "ehdpsu.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -35,5 +56,12 @@ line-length = 100
 target-version = ["py311"]
 
 [tool.mypy]
-python_version = "3.11"
+# Pinned explicitly rather than inherited from whichever interpreter invokes mypy, so the Gate is
+# deterministic across machines.
+#
+# This was "3.11" until 2026-09-15, which made `mypy src` abort inside numpy's stubs having
+# examined ZERO files. It exited non-zero with one tidy-looking error, and four consecutive task
+# reports described that as a minor caveat while working around it with an explicit
+# --python-version override. See artifacts/00_Governance/2026-09-15_DECISION_the_gate.md.
+python_version = "3.12"
 ignore_missing_imports = true

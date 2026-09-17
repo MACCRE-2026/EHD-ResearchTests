@@ -64,6 +64,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from . import profile
+from .profile import Profile
+
 # Physical constants (SI)
 EPS0: float = 8.854e-12  # Vacuum permittivity [F/m]
 G_EARTH: float = 9.81  # Standard gravity [m/s^2]
@@ -106,22 +109,60 @@ class DesignParameters:
         Per-stage capacitance [F].
     """
 
-    r_wire_m: float = 25e-6
-    d_gap_m: float = 0.012
-    L_wire_m: float = 0.15
-    mu_ion: float = 1.5e-4
-    delta: float = 1.0
-    m_rough: float = 0.8
-    V_op: float = 22000.0
-    f_sw: float = 250000.0
-    N_stages: int = 5
-    C_stage: float = 1.0e-9
+    # NO DEFAULTS, deliberately. Every field is required, and the only way to obtain a populated
+    # instance is :meth:`from_profile` (or :func:`default_design`, which calls it). A literal
+    # default here would be a second home for a design value, and both copies would keep working
+    # while they disagreed -- *principle 4, two representations of one thing will drift*.
+    #
+    # `tests/test_profile_seam.py` asserts these fields stay default-free, because re-adding one
+    # is the easy, well-intentioned edit that would undo the whole migration.
+    r_wire_m: float
+    d_gap_m: float
+    L_wire_m: float
+    mu_ion: float
+    delta: float
+    m_rough: float
+    V_op: float
+    f_sw: float
+    N_stages: int
+    C_stage: float
+
+    @classmethod
+    def from_profile(cls, prof: Profile) -> DesignParameters:
+        """Build design parameters from a spec-scope-profile. The only populating constructor.
+
+        Field names differ from the profile's on purpose: the profile's are fully unit-suffixed
+        (``V_op_V``, ``mu_ion_m2_per_Vs``), which this dataclass's predate. The mapping lives here
+        and nowhere else.
+        """
+        return cls(
+            r_wire_m=prof.required("r_wire_m"),
+            d_gap_m=prof.required("d_gap_m"),
+            L_wire_m=prof.required("L_wire_m"),
+            mu_ion=prof.required("mu_ion_m2_per_Vs"),
+            delta=prof.required("delta_air_density"),
+            m_rough=prof.required("m_rough_factor"),
+            V_op=prof.required("V_op_V"),
+            f_sw=prof.required("f_sw_Hz"),
+            N_stages=prof.count("N_stages"),
+            C_stage=prof.required("C_stage_F"),
+        )
+
+
+def default_design() -> DesignParameters:
+    """Return the design parameters from the default profile.
+
+    Every module that previously wrote ``DesignParameters()`` now calls this. The name says a file
+    is read, which the bare constructor did not: an implicit disk read inside a dataclass
+    constructor is the kind of hidden behaviour that is hard to reason about when it fails.
+    """
+    return DesignParameters.from_profile(profile.default_profile())
 
 
 def peek_inception_field(
     r_wire_m: float,
-    delta: float = 1.0,
-    m_rough: float = 1.0,
+    delta: float,
+    m_rough: float,
     g0: float = 3.1e6,
     c: float = 0.308,
 ) -> float:
@@ -141,13 +182,22 @@ def peek_inception_field(
     r_wire_m : float
         Wire radius [m].
     delta : float
-        Relative air density (1.0 = sea-level standard air).
+        Relative air density (1.0 = sea-level standard air). **Required.** It defaulted to 1.0
+        until 2026-09-15, which let a caller assume standard air without saying so — a design
+        assumption made silently. It is a profile value (``delta_air_density``), so the caller has
+        one to hand.
     m_rough : float
-        Surface-roughness factor (1.0 polished, ~0.6-0.85 practical wire).
+        Surface-roughness factor (1.0 polished, ~0.6-0.85 practical wire). **Required**, for the
+        same reason: the profile carries ``m_rough_factor``, and defaulting to a polished wire
+        overstates the inception field for any real emitter.
     g0 : float
-        Base breakdown gradient [V/m]. Literature: 3.0-3.2e6 V/m.
+        Base breakdown gradient [V/m]. Literature: 3.0-3.2e6 V/m. Defaulted deliberately: this is
+        part of Peek's **cited relation**, not a design choice, and per-design tuning of it would
+        be the curve-fitting this project forbids. Registered in
+        ``profile.DESIGN_VALUE_EXEMPTIONS``.
     c : float
-        Peek coefficient [cm^0.5]. Literature: ~0.301-0.308.
+        Peek coefficient [cm^0.5]. Literature: ~0.301-0.308. Defaulted for the same reason as
+        ``g0``.
 
     Returns
     -------

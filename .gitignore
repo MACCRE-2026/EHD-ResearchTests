@@ -1,4 +1,25 @@
+# ---------------------------------------------------------------------------
+# Google Drive for Desktop staging directories.
+#
+# The project root is Drive-synced. Drive creates these INSIDE the synced folder
+# while transferring, so they appear at the repository root, hold dozens of
+# transient numbered blobs, and vanish again. They were untracked and NOT ignored
+# until 2026-09-15, which meant they showed up in `git status` and were one
+# `git add .` away from being committed.
+#
+# They also make "the working tree is clean" a moving target: a status check can
+# be empty one minute and show thirty untracked files the next, purely because a
+# sync started. Ignoring them keeps status meaningful.
+# ---------------------------------------------------------------------------
+.tmp.driveupload/
+.tmp.drivedownload/
+
 # Virtual environments
+#
+# NOTE: gitignoring these does not stop Drive syncing them. Drive does not read
+# .gitignore. .venv/ is ~408 MB and .mypy_cache/ ~17 MB of churn being uploaded
+# on every change. Excluding them is a Drive-side configuration decision, not a
+# git one.
 .venv/
 venv/
 
@@ -12,11 +33,55 @@ __pycache__/
 build/
 dist/
 
-# Generated outputs (keep the directory via .gitkeep)
-outputs/*.csv
-outputs/*.png
-!outputs/.gitkeep
+# ---------------------------------------------------------------------------
+# The project datacenter, ignored at the FOLDER level.
+#
+# artifacts/ holds governance records, conversation transcripts, task packets,
+# breadcrumbs, solver runs, imported inputs and generated outputs. None of it is
+# tracked, so none of it exists in a clone. That is why nothing under artifacts/
+# may be cited as evidence by a commit, and why a commit touching it is never
+# self-contained or reproducible for anyone else.
+#
+# There is deliberately NO negation for anything inside it.
+#
+# The previous version of this file carried
+#
+#     !artifacts/.gitkeep
+#
+# with no preceding ignore rule for artifacts/ at all. A negation without a
+# matching ignore pattern silently does nothing, so the folder was never actually
+# ignored, and four generated files ended up tracked inside it -- the MIXED
+# tracked/ignored state that then had to be unpicked by hand. Recorded here rather
+# than quietly deleted, because the failure mode is invisible: git does not warn
+# about a negation that matches nothing.
+#
+# Where the tracked counterparts live, both deliberately OUTSIDE this folder:
+#   solver_inputs/   generated inputs the GUI solvers need (small, deterministic)
+#   examples/        reference outputs, so a clone has something to compare against
+# ---------------------------------------------------------------------------
+artifacts/
 
-# Generated artifacts are regenerable; keep the directory via .gitkeep.
-# Small example artifacts may be force-added explicitly when needed.
-!artifacts/.gitkeep
+# ---------------------------------------------------------------------------
+# Operator profiles: the folder exists in a clone, empty of designs.
+#
+# Chief Operator, 2026-09-15: "the profiles directory should clone empty and the
+# profiles i work on should stay on disk and will be backed up to google drive but
+# should not be pushed publicly."
+#
+# So spec-scope-profiles are the operator's working designs, not repository
+# content. There is deliberately NO reference design shipped here, because there
+# is no set design point -- MK0 was a planning baseline and will change with the
+# design and the size.
+#
+# The MK0 profile the regression suite needs is therefore a TEST FIXTURE and lives
+# at tests/data/mk0_reference_profile.json, tracked. That separation is the point:
+# "which design am I working on" and "what proves the physics has not drifted" are
+# different questions and must not share a switch.
+#
+# Only README.md is tracked here, so the directory exists in a clone with an
+# explanation in it rather than being absent or unexplained. The negation is safe
+# because it is paired with the ignore rule directly above it -- verified with
+# `git check-ignore -v`, per the .gitkeep incident recorded above.
+# ---------------------------------------------------------------------------
+profiles/*
+!profiles/README.md

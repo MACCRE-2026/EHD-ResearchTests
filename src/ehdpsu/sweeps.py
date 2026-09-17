@@ -10,7 +10,7 @@ one design variable at a time (operating voltage, wire radius, gap, switching
 frequency, per-stage capacitance, stage count) and returns a
 :class:`pandas.DataFrame` of derived quantities for each. Each sweep can be
 rendered to a companion CSV (``DataFrame.to_csv``) and a matplotlib PNG under
-``outputs/``.
+``artifacts/07_Outputs/`` (tier 07 of the untracked project datacenter).
 
 Physics honesty
 ---------------
@@ -46,15 +46,69 @@ import numpy as np
 import pandas as pd
 
 from . import physics
-from .physics import DesignParameters
+from .physics import DesignParameters, default_design
+
+# ---------------------------------------------------------------------------
+# Upper-bound labelling for emitted columns.
+# ---------------------------------------------------------------------------
+#
+# *Physics honesty rule 4:* an upper bound is labelled an upper bound **everywhere** it appears --
+# the CSV column header, the plot axis, the spec-sheet row, the docstring -- and not once in a
+# footnote. A ceiling in a bare column called `thrust_N` becomes a prediction the moment somebody
+# opens the CSV without having read the derivation, and that somebody is often the author six weeks
+# later.
+#
+# Why exactly these three:
+#   thrust_N, thrust_gf     `T = I*d/mu` assumes every ion transfers all its momentum to neutrals,
+#                           with no neutral drag and a uniform gap field. Real thrust is LOWER.
+#   efficiency_N_per_kW     the ratio of that ceiling thrust to the same power, so it inherits the
+#                           ceiling even though its k_geo band is exact (k_geo cancels in F/P).
+#
+# Why NOT the others, which is the more interesting half:
+#   I_ion, power, droop, ripple   these carry the k_geo x10 BAND, which is a two-sided uncertainty
+#                                 and not a ceiling. Labelling them UPPER_BOUND would be false --
+#                                 the real current could be higher or lower.
+#   E_peek, V_onset, margins      independent of k_geo, and neither bounds nor especially uncertain.
+#
+# And telemetry's `thrust_N` is deliberately NOT labelled: it is a load-cell reading, so calling it
+# a ceiling would be wrong in the opposite direction. `tests/test_sweeps.py` pins that asymmetry,
+# because "make these consistent" is the tidying that would corrupt it.
+UPPER_BOUND_SUFFIX = "_UPPER_BOUND"
+
+#: Emitted column base names that are ceilings rather than estimates.
+UPPER_BOUND_COLUMNS: tuple[str, ...] = ("thrust_N", "thrust_gf", "efficiency_N_per_kW")
+
+
+def labelled(column: str) -> str:
+    """Return ``column`` with the upper-bound suffix appended if it names a ceiling.
+
+    One function, applied at the single point where a sweep row is assembled, so the label cannot
+    be forgotten for one sweep and remembered for another.
+    """
+    return f"{column}{UPPER_BOUND_SUFFIX}" if column in UPPER_BOUND_COLUMNS else column
+
 
 # Default output directory for CSVs and PNGs.
-DEFAULT_OUTPUT_DIR = Path("outputs")
+#
+# Tier 07 of the untracked project datacenter. Generated data is never tracked: it is
+# reproducible from the code and the profile, and committing it would create a second
+# representation that can disagree with what the code now produces.
+DEFAULT_OUTPUT_DIR = Path("artifacts/07_Outputs")
 
 # A short caveat string reused in plot captions / CLI output.
 UPPER_BOUND_CAVEAT = (
     "Thrust/efficiency are idealized mobility-limited UPPER BOUNDS; "
     "ion current uses a labeled parallel-plate prefactor (order-of-magnitude)."
+)
+
+# For the droop and ripple plots, which are NOT bounds but do inherit the k_geo band through the
+# load current. Without this a reader takes the absolute level at face value: the curve *shape*
+# against frequency, capacitance and stage count is sound, and the level is uncertain by an order
+# of magnitude. Two different things, and only one of them is being demonstrated.
+K_GEO_BAND_CAVEAT = (
+    "Inherits the k_geo x0.1-x1.0 model band through the load current: the trend is sound, "
+    "the absolute level is uncertain by an order of magnitude. NOT an upper bound -- the real "
+    "current may be higher or lower."
 )
 
 
@@ -86,7 +140,7 @@ def _operating_point(p: DesignParameters) -> dict[str, float]:
     breakdown_margin = physics.mean_gap_breakdown_margin(p.V_op, p.d_gap_m)
     droop = physics.cw_voltage_droop(i_ion, p.f_sw, p.C_stage, p.N_stages)
     ripple = physics.cw_ripple_pp(i_ion, p.f_sw, p.C_stage, p.N_stages)
-    return {
+    row = {
         "E_peek_MVpm": e_peek / 1e6,
         "V_onset_kV": v_onset / 1e3,
         "k_geo_ApV2": k_geo,
@@ -101,6 +155,9 @@ def _operating_point(p: DesignParameters) -> dict[str, float]:
         "droop_pct": (droop / p.V_op * 100.0) if p.V_op > 0 else 0.0,
         "ripple_Vpp": ripple,
     }
+    # Applied uniformly at the one place every sweep row is built, so a ceiling cannot reach a CSV
+    # without its label. See UPPER_BOUND_COLUMNS for why these three and not the others.
+    return {labelled(name): value for name, value in row.items()}
 
 
 def sweep_voltage(
@@ -123,10 +180,11 @@ def sweep_voltage(
     Returns
     -------
     pandas.DataFrame
-        Columns include ``V_op_kV``, ``I_ion_mA``, ``power_W``, ``thrust_N``,
-        ``thrust_gf``, ``efficiency_N_per_kW``, ``corona_onset_margin``.
+        Columns include ``V_op_kV``, ``I_ion_mA``, ``power_W``,
+        ``thrust_N_UPPER_BOUND``, ``thrust_gf_UPPER_BOUND``,
+        ``efficiency_N_per_kW_UPPER_BOUND``, ``corona_onset_margin``.
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     rows = []
     for v in np.linspace(v_min, v_max, n):
         op = _operating_point(_replace(p, V_op=float(v)))
@@ -146,9 +204,9 @@ def sweep_wire_radius(
     -------
     pandas.DataFrame
         Columns include ``r_wire_um``, ``E_peek_MVpm``, ``V_onset_kV``,
-        ``corona_onset_margin``, ``I_ion_mA``, ``thrust_N``.
+        ``corona_onset_margin``, ``I_ion_mA``, ``thrust_N_UPPER_BOUND``.
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     rows = []
     for r in np.linspace(r_min, r_max, n):
         op = _operating_point(_replace(p, r_wire_m=float(r)))
@@ -167,10 +225,10 @@ def sweep_gap(
     Returns
     -------
     pandas.DataFrame
-        Columns include ``d_gap_mm``, ``V_onset_kV``, ``thrust_N``,
+        Columns include ``d_gap_mm``, ``V_onset_kV``, ``thrust_N_UPPER_BOUND``,
         ``mean_gap_breakdown_margin``, ``corona_onset_margin``, ``I_ion_mA``.
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     rows = []
     for d in np.linspace(d_min, d_max, n):
         op = _operating_point(_replace(p, d_gap_m=float(d)))
@@ -192,7 +250,7 @@ def sweep_frequency(
         Columns include ``f_sw_kHz``, ``droop_V``, ``droop_pct``,
         ``ripple_Vpp``, ``I_ion_mA``.
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     rows = []
     for f in np.linspace(f_min, f_max, n):
         op = _operating_point(_replace(p, f_sw=float(f)))
@@ -214,7 +272,7 @@ def sweep_capacitance(
         Columns include ``C_stage_nF``, ``droop_V``, ``droop_pct``,
         ``ripple_Vpp``, ``I_ion_mA``.
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     rows = []
     for c in np.linspace(c_min, c_max, n):
         op = _operating_point(_replace(p, C_stage=float(c)))
@@ -245,7 +303,7 @@ def sweep_stages(
         Columns include ``N_stages``, ``droop_V``, ``droop_pct``,
         ``ripple_Vpp``, ``V_out_noload_ref_kV``, ``I_ion_mA``.
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     rows = []
     for n_stage in range(n_min, n_max + 1):
         pp = _replace(p, N_stages=int(n_stage))
@@ -352,7 +410,7 @@ def run_all(p: DesignParameters | None = None, output_dir: Path = DEFAULT_OUTPUT
     list[Path]
         All files written (CSVs and PNGs), in creation order.
     """
-    p = p or DesignParameters()
+    p = p or default_design()
     output_dir = Path(output_dir)
     written: list[Path] = []
 
@@ -360,10 +418,10 @@ def run_all(p: DesignParameters | None = None, output_dir: Path = DEFAULT_OUTPUT
         sweep_voltage(p),
         "sweep_voltage",
         "V_op_kV",
-        ["thrust_gf", "efficiency_N_per_kW"],
-        "Thrust and efficiency vs operating voltage",
+        [labelled("thrust_gf"), labelled("efficiency_N_per_kW")],
+        "Thrust and efficiency vs operating voltage (UPPER BOUNDS)",
         "V_op [kV]",
-        "thrust [grams-force] / efficiency [N/kW]",
+        "thrust [gf] / efficiency [N/kW] - UPPER BOUNDS, real values are lower",
         output_dir=output_dir,
         caption=UPPER_BOUND_CAVEAT,
     )
@@ -403,6 +461,7 @@ def run_all(p: DesignParameters | None = None, output_dir: Path = DEFAULT_OUTPUT
         "f_sw [kHz]",
         "droop [% of V_op]",
         output_dir=output_dir,
+        caption=K_GEO_BAND_CAVEAT,
     )
     written += [csv, png]
 
@@ -415,6 +474,7 @@ def run_all(p: DesignParameters | None = None, output_dir: Path = DEFAULT_OUTPUT
         "C_stage [nF]",
         "droop [% of V_op]",
         output_dir=output_dir,
+        caption=K_GEO_BAND_CAVEAT,
     )
     written += [csv, png]
 
@@ -427,6 +487,7 @@ def run_all(p: DesignParameters | None = None, output_dir: Path = DEFAULT_OUTPUT
         "N stages",
         "droop [%] / ripple [Vpp]",
         output_dir=output_dir,
+        caption=K_GEO_BAND_CAVEAT,
     )
     written += [csv, png]
 
@@ -434,8 +495,8 @@ def run_all(p: DesignParameters | None = None, output_dir: Path = DEFAULT_OUTPUT
 
 
 def main() -> None:
-    """Run all sweeps to ``outputs/`` and print a summary of files written."""
-    p = DesignParameters()
+    """Run all sweeps to ``artifacts/07_Outputs/`` and summarise the files written."""
+    p = default_design()
     written = run_all(p, DEFAULT_OUTPUT_DIR)
     print("=== EHD PSU parameter sweeps ===")
     print(

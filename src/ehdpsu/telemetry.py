@@ -65,7 +65,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 # Default output directory for derived CSV + plots.
-DEFAULT_OUTPUT_DIR = Path("outputs")
+#
+# Tier 07 of the untracked project datacenter. See :mod:`ehdpsu.sweeps`.
+DEFAULT_OUTPUT_DIR = Path("artifacts/07_Outputs")
 
 # The exact controller CSV schema (order matters for validation messages).
 REQUIRED_COLUMNS: tuple[str, ...] = ("t_s", "F_mN", "V_HV_kV", "I_HV_mA", "P_in_W")
@@ -147,7 +149,15 @@ def load_telemetry(path: str | Path) -> pd.DataFrame:
             f"telemetry CSV is missing required column(s): {missing}; "
             f"expected schema {list(REQUIRED_COLUMNS)}, got {list(df.columns)}"
         )
-    return df[list(REQUIRED_COLUMNS)].copy()
+    # The explicit DataFrame construction is not redundant. `df[list_of_columns]` is typed as
+    # `DataFrame | Series` because pandas returns a Series when the indexer collapses to a single
+    # label, and the declared return type here is `DataFrame`. Any downstream caller doing
+    # `result["thrust_N"]` would break on a Series.
+    #
+    # Found by pyright (`reportReturnType`) and NOT by mypy, which infers pandas loosely under
+    # `ignore_missing_imports`. It is the first concrete evidence in this project that the two
+    # checkers catch different classes, which is why both are in the Gate.
+    return pd.DataFrame(df[list(REQUIRED_COLUMNS)]).copy()
 
 
 def compute_derived(df: pd.DataFrame) -> pd.DataFrame:

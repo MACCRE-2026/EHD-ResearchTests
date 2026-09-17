@@ -20,17 +20,17 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import reference_design, reference_spice_params
 
 from ehdpsu import spice
-from ehdpsu.physics import DesignParameters
 
-P = DesignParameters()
+P = reference_design()
 
 
 @pytest.fixture
 def netlist() -> str:
     """The default-design netlist text."""
-    return spice.build_netlist(P, spice.SpiceParams())
+    return spice.build_netlist(P, reference_spice_params())
 
 
 def test_ehd_load_numbers_match_physics() -> None:
@@ -112,7 +112,9 @@ def test_llc_primary_present(netlist: str) -> None:
 
 def test_write_artifacts_creates_files(tmp_path: Path) -> None:
     """write_artifacts writes both the .cir and .asc to the target directory."""
-    written = spice.write_artifacts(P, spice.SpiceParams(), output_dir=tmp_path, write_asc=True)
+    written = spice.write_artifacts(
+        P, reference_spice_params(), output_dir=tmp_path, write_asc=True
+    )
     assert len(written) == 2
     cir = tmp_path / "ehd_llc_cw.cir"
     asc = tmp_path / "ehd_llc_cw.asc"
@@ -126,7 +128,9 @@ def test_write_artifacts_creates_files(tmp_path: Path) -> None:
 
 def test_write_artifacts_cir_only(tmp_path: Path) -> None:
     """write_asc=False writes only the .cir artifact."""
-    written = spice.write_artifacts(P, spice.SpiceParams(), output_dir=tmp_path, write_asc=False)
+    written = spice.write_artifacts(
+        P, reference_spice_params(), output_dir=tmp_path, write_asc=False
+    )
     assert len(written) == 1
     assert written[0].name == "ehd_llc_cw.cir"
     assert not (tmp_path / "ehd_llc_cw.asc").exists()
@@ -137,6 +141,6 @@ def test_stage_count_follows_design_parameters() -> None:
     import dataclasses
 
     p3 = dataclasses.replace(P, N_stages=3)
-    netlist = spice.build_netlist(p3, spice.SpiceParams())
+    netlist = spice.build_netlist(p3, reference_spice_params())
     diode_lines = re.findall(r"^Dd\d+[ab]\s", netlist, re.MULTILINE)
     assert len(diode_lines) == 6  # 3 stages x 2 diodes

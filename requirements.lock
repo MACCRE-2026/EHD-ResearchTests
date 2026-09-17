@@ -1,0 +1,78 @@
+# Exact environment pins for EHD-ResearchTests.
+#
+# GENERATED, never hand-edited. Regenerate with:
+#
+#     .\.venv\Scripts\python.exe -m pip freeze --all
+#
+# dropping the `-e ...#egg=ehdpsu` line and the `pip==` line (see the two omissions below), and
+# sorting by lowercased PACKAGE NAME. The sort rule is part of the format: `Sort-Object` in
+# PowerShell is culture-aware and ordered `mypy_extensions` before `mypy` on this machine, which
+# would make the file regenerate differently on a machine with a different culture and produce
+# diff noise indistinguishable from a real dependency change. `test_environment_lock.py` asserts
+# the ordering.
+#
+# and re-run the Gate: tests/test_environment_lock.py compares this file against the installed
+# environment and fails when they disagree. A lockfile nothing checks is a document that drifts
+# from the thing it claims to describe -- *principle 5, specifications drift from implementations
+# unless mechanically checked*.
+#
+# WHY THE DEV TOOLING IS PINNED HERE TOO
+# --------------------------------------
+# ruff, black, mypy, pyright and pytest are pinned in the same file as numpy and scipy, and that
+# is deliberate. The Gate's verdict is a function of its tools: a ruff minor release adds lint
+# rules, a mypy release tightens inference, a pyright release changes what it reports. Leaving
+# them floating means the Gate can go red -- or green -- for reasons that have nothing to do with
+# the code, which makes it useless as a regression signal.
+#
+# WHAT THIS FILE IS DEPENDED UPON FOR, AND WHAT IT IS NOT
+# ------------------------------------------------------
+# It pins VERSIONS. It does NOT pin artifact HASHES, so it does not defend against a compromised
+# or re-uploaded PyPI artifact at a version already released. Hash pinning needs
+# `pip install --require-hashes` and a hash-bearing lock, which `pip freeze` cannot emit; that is
+# a further step, not something this file quietly provides. Stated here because a file named
+# `.lock` invites the stronger assumption.
+#
+# TWO DELIBERATE OMISSIONS
+# ------------------------
+# `ehdpsu` -- the project itself. `pip freeze` emits it as
+# `-e git+https://github.com/MACCRE-2026/EHD-ResearchTests.git@<commit>#egg=ehdpsu`, which would
+# make a bootstrap clone the repository from GitHub at a frozen commit in order to install the
+# working tree it is already sitting in. `bootstrap.ps1` installs it with `pip install -e .`
+# instead.
+#
+# `pip` -- pinning it makes pip downgrade or upgrade itself partway through installing this file,
+# which is a class of flakiness with no reproducibility benefit. The venv provides it.
+#
+# The versions below were captured on 2026-09-15 against Python 3.12.8 on Windows.
+ast_serialize==0.11.2
+black==26.5.1
+click==8.5.0
+colorama==0.4.6
+contourpy==1.4.0
+cycler==0.12.1
+fonttools==4.65.0
+iniconfig==2.3.0
+kiwisolver==1.5.1
+librt==0.15.0
+matplotlib==3.11.2
+mypy==2.3.1
+mypy_extensions==1.1.0
+nodeenv==1.10.0
+numpy==2.5.3
+packaging==26.3
+pandas==3.0.5
+pathspec==1.1.1
+pillow==12.3.0
+platformdirs==4.11.8
+pluggy==1.6.0
+Pygments==2.21.0
+pyparsing==3.3.2
+pyright==1.1.414
+pytest==9.1.1
+python-dateutil==2.9.0.post0
+pytokens==0.4.1
+ruff==0.16.7
+scipy==1.18.1
+six==1.17.0
+typing_extensions==4.16.0
+tzdata==2026.4
