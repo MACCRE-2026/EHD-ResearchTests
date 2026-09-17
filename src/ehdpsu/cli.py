@@ -34,6 +34,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from . import adapters
 from . import profile as prof
 from .basis import may_be_called_validated
 from .claims import CLAIM_SETS
@@ -54,6 +55,9 @@ EXIT_REFUSED_OVERWRITE = 6
 # A claim that contradicts figures derived from its own source. Distinct from EXIT_INVALID_PROFILE
 # because nothing is malformed: the data is well-formed and the physics does not support it.
 EXIT_CLAIM_INCONSISTENT = 7
+# An adapter raised while probing. Distinct from every code above because it reports a defect in the
+# suite, not a fact about the machine: an absent solver is the normal state here and exits 0.
+EXIT_ADAPTER_BROKEN = 8
 
 
 def _resolve(target: str, profile_dir: Path) -> Path:
@@ -360,6 +364,65 @@ def cmd_report(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Print the tool matrix: what the suite can drive, and what it cannot.
+
+    Absence is the expected answer today and is reported per tool rather than summarised away. A
+    capability whose tool is absent reports as **absent**, not as degraded-but-fine, because the
+    alternative — quietly falling back to a closed-form estimate — is how a placeholder becomes a
+    result.
+
+    Exit status is ``EXIT_OK`` when the matrix printed, including when nothing resolved. An absent
+    solver is the normal state of this repository, not a command failure. ``EXIT_ADAPTER_BROKEN`` is
+    reserved for an adapter that raised while probing, which is a defect in the suite rather than a
+    fact about the machine.
+    """
+    rows = adapters.doctor_rows()
+    broken = [r for r in rows if r.status == "adapter-error"]
+
+    print("Tool matrix — registered adapters and what each can currently do.\n")
+    for row in rows:
+        print(f"  {row.tool}")
+        print(f"    status     : {row.status}")
+        print(f"    run mode   : {row.run_mode}")
+        if row.path:
+            print(f"    path       : {row.path}")
+        print(f"    version    : {row.version or '(not captured)'}")
+        if row.routes_tried:
+            print(f"    routes     : {', '.join(row.routes_tried)}")
+        print(f"    capability : {row.capability}")
+        if row.note:
+            print(f"    note       : {row.note}")
+        print()
+
+    # Derived from the rows already probed, never by probing again: a re-probe would step outside
+    # doctor_rows()'s containment and let a raising adapter crash the summary that reports it.
+    unresolved = adapters.unresolved_capabilities(rows)
+    if unresolved:
+        print(
+            f"{len(unresolved)} of {len(rows)} registered tool(s) did not resolve: "
+            f"{', '.join(unresolved)}."
+        )
+        print(
+            "Those capabilities are ABSENT. Nothing substitutes for them: the closed-form figures\n"
+            "elsewhere in this suite are not stand-ins for a solve, and no result may be called\n"
+            "`solved` without a run record carrying tool version, input hash and values read back."
+        )
+    else:
+        print(f"All {len(rows)} registered tool(s) resolved.")
+
+    print(
+        "\nDetection covers seven tools; four of them (gmsh, elmer, openfoam, paraview) have no\n"
+        "adapter yet, so they are absent from this matrix rather than shown as untested."
+    )
+
+    if broken:
+        names = ", ".join(r.tool for r in broken)
+        print(f"\nERROR: adapter(s) raised while probing: {names}", file=sys.stderr)
+        return EXIT_ADAPTER_BROKEN
+    return EXIT_OK
+
+
 # ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
@@ -419,6 +482,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="profile id or path for the route comparison; claims are adjudicated either way",
     )
     crosscheck.set_defaults(func=cmd_crosscheck)
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="print the external-tool matrix: what the suite can drive, and what it cannot",
+    )
+    doctor.set_defaults(func=cmd_doctor)
 
     return parser
 

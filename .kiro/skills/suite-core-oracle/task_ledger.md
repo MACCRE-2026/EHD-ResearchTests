@@ -1210,3 +1210,93 @@ because a fix without a test does not survive the next implementation.
     output at exit `-1` while the Gate was mid-run. Distinguished at the time rather than mistaken
     for failures, per the recorded terminal-reality findings — but the accumulation is the condition
     that produced them.
+
+### 2026-09-16 — Task 12: the adapter layer, `doctor`, and mechanical attribution. `COMPLETED`
+
+- **Status:** COMPLETED. With the detection work of the two entries above, this closes plan Task 12.
+- **Files:** `src/ehdpsu/adapters/` (new package: `__init__.py`, `base.py`, `provenance.py`,
+  `solvers.py`), `src/ehdpsu/cli.py` (the `doctor` verb, `EXIT_ADAPTER_BROKEN = 8`),
+  `tests/test_adapters.py` (new, 140 checks), `tests/test_cli.py` (+8 doctor checks, command-set
+  assertion extended), `.kiro/governance/gate.ps1` (floor 656 → 804, breadth 39 → 44).
+- **Signatures:** `Adapter` (ABC), `RunOutcome`, `RunResult`, `ParsedResult`, `AdapterError`,
+  `ParseError`, `GenerateError`, `RESULT_FILE_MAGIC`, `parse_result_file`; `RunRecord`,
+  `ProvenanceError`, `sha256_of_file`, `record_from_parsed`, `write_run_record`; `FemmAdapter`,
+  `LtspiceAdapter`, `QspiceAdapter`; `ADAPTERS`, `adapter_for`, `DoctorRow`, `doctor_rows`,
+  `unresolved_capabilities`; `cli.cmd_doctor`.
+- **Decision:**
+  - **An ABC, not a Protocol.** The contract test has to be able to say "this adapter is missing an
+    obligation", and structural typing cannot fail that way. Only `generate` and `run` are abstract:
+    `detect`, `version` and `parse` are **concrete and shared**, because an adapter free to
+    reimplement detection is an adapter free to get the `TOOL_ABSENT` / `TOOL_UNRESOLVED`
+    distinction wrong on its own, and six adapters with six parsers is six chances to disagree about
+    what a missing version means.
+  - **The result-file format is the suite's, not the tools'.** Output shapes for FEMM, LTspice and
+    QSPICE are largely unpublished and all three are GUI-driven, so what the adapter parses is a
+    **human transcription** beginning `# ehd-run-result v1`. A magic line rather than shape-sniffing:
+    the adapter cannot recognise "a FEMM result" in the wild, but it can recognise a file written for
+    this suite. Anything else is unusable rather than best-effort.
+  - **The transcription must carry `tool_version` and `input_sha256` in the same file as the
+    numbers.** A version supplied separately is a version somebody remembered; a hash supplied
+    separately cannot tie the numbers to that input. This is what makes the Task 12 provenance
+    requirement enforceable rather than procedural.
+  - **`RunRecord` cannot be constructed incomplete.** `__post_init__` refuses, and `basis` returns
+    `SOLVED` **unconditionally with no branch** — a test AST-walks the property and fails on any
+    `if`. The gate is at construction, where an object cannot exist without passing it, rather than
+    at interpretation, where a caller can ignore a returned flag. An incomplete run is not a weaker
+    record; it is not a record. Rejected: a `basis` that downgrades to
+    `analytical-placeholder` when fields are missing, which would leave partial records sitting in
+    the datacenter looking like evidence.
+  - **`record_from_parsed` re-hashes the input and refuses a mismatch**, with its own message. A
+    transcribed hash that does not match the artifact now on disk is a *different* failure from a
+    missing hash: the values describe a geometry or circuit that no longer exists. Re-run rather
+    than reconcile — reconciling would be curve-fitting the provenance.
+  - **All three adapters report `run` as manual, and that is a claim about this project, not about
+    the tools.** QSPICE genuinely accepts a netlist on the command line and LTspice has a batch
+    switch; neither is claimed, because **no installation of either has been inspected** and an
+    invocation nobody has performed is not a capability. A test asserts no adapter returns
+    `COMPLETED`, so the day Task 13 changes that, it changes in a diff.
+  - **`NOT_CHOSEN` exists and nothing returns it**, with a test pinning that. It is Task 14's state,
+    for the competing CFD routes where mapping every route without committing to one is the explicit
+    intent. Recorded rather than deferred so it cannot later be quietly repurposed as a synonym for
+    "unavailable", which would collapse the distinction the plan depends on.
+  - **`doctor` exits 0 with nothing installed.** An absent solver is the normal state of this
+    repository; a non-zero exit would make the ordinary condition indistinguishable from a defect and
+    the operator would learn to ignore it. `EXIT_ADAPTER_BROKEN = 8` is reserved for an adapter that
+    *raised*, which is a defect in the suite rather than a fact about the machine.
+  - **`doctor` names the four detectable-but-unadapted tools** — gmsh, elmer, openfoam, paraview.
+    Silence about them would read as coverage: a reader would conclude the suite drives everything it
+    can detect. A test pins that set, so registering an adapter for one of them updates it
+    deliberately.
+  - **`DoctorRow` is a record, not a formatted string.** The CLI owns presentation and the GUI will
+    render the same rows — *the GUI holds no architecture of its own.*
+  - **Adapters look their `ToolSpec` up from `detect.KNOWN_TOOLS` rather than restating it.** An
+    adapter with its own executable list would eventually disagree with the detection table, and the
+    vendor-cited `EXECUTABLE_PROVENANCE` register only covers the copy in `detect`.
+- **Evidence — a defect the Gate caught that review had not:**
+  `unresolved_capabilities()` originally re-probed every adapter. With a raising adapter that second
+  probe stepped **outside** the containment `doctor_rows()` provides, so `doctor` crashed inside the
+  very summary that was reporting the breakage — while its own docstring promised a broken adapter
+  becomes a row rather than a crash. Two failures in one run, `EXIT=6`, and this was one of them.
+  Fixed by deriving the summary from the rows already probed; *principle 4, two representations of
+  one thing will drift*, and the second representation had existed for about ten minutes. The test
+  that "two derivations agree" was the smell rather than the remedy, and is now two tests that
+  exercise the raising case directly.
+  - The other failure was `test_every_command_is_reachable`, which enumerates the parser's
+    subcommands. It failed because `doctor` was added — the check working exactly as intended.
+- **Evidence — the Gate, captured to a file and read from it:** status **OK**, `EXIT=0`,
+  `pytest 804 collected / 804 passed at floor 804`,
+  `ruff=44 black=44 mypy=44 pyright=44 (expected >= 44)`,
+  `0 skipped, 0 xfail/xpass, 0 deselected`, 2 governance verifiers green.
+- **Evidence — `ehdsuite doctor` actually run**, not merely tested: all three registered tools report
+  `tool-absent` with run mode `tool-unavailable`, each naming all four routes attempted, and the
+  summary states the capabilities are ABSENT with nothing substituted. Exit 0.
+- **Inherited:**
+  - **No solver has been run and none is installed.** Every obligation above is exercised against
+    fabricated inputs and refusals. `generate` is verified byte-reproducible and verified identical
+    to the tracked `solver_inputs/` copies; `parse` is verified against thirteen malformed shapes;
+    `run` is verified to refuse. **Nothing verifies that FEMM would accept the Lua script**, because
+    that needs FEMM.
+  - The result-file format has **never been written by a human at a bench.** It is small by design,
+    but its usability is untested, and Task 13 is where that becomes a finding.
+  - `RunRecord` is written but **no run record exists**; `artifacts/05_Solver_Runs/` is still empty.
+  - Four tools remain unadapted. `detect` covers seven; the other four obligations cover three.

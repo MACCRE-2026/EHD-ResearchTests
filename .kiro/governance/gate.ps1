@@ -149,6 +149,10 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 #                              provenance, declared default-path and version-probe gaps, the
 #                              published signature, version-probe isolation, GUI-launch hazard,
 #                              and no dead helpers
+#   Task 12            804   <- the adapter layer: five obligations as an ABC, the run-record
+#                              gate, `ehdsuite doctor`, and mechanical attribution. Most of the
+#                              148 are parameterised over the registry, so a fourth adapter
+#                              raises this count without a new test being written
 #
 # Correction, 2026-09-16. The line now reading 600 previously read
 # "Task (this packet) 600   <- adapter detection: 21 new tests". Both halves were wrong, and both
@@ -164,7 +168,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 656
+$COLLECTED_FLOOR = 804
 
 $result = [ordered]@{
     status          = $null
@@ -287,9 +291,11 @@ function Invoke-Stage {
 #   Task 8 (op point)   31   <- src/ehdpsu/operating_point.py, tests/test_operating_point.py
 #   FR-005 CLI          34   <- src/ehdpsu/{cli,__main__}.py, tests/test_cli.py
 #   Task 9              37   <- src/ehdpsu/{claims,crossvalidate}.py, tests/test_crossvalidate.py
-#   Task (this packet)  39   <- src/ehdpsu/detect.py, tests/test_detect.py
+#   Adapter detection   39   <- src/ehdpsu/detect.py, tests/test_detect.py
+#   Task 12             44   <- src/ehdpsu/adapters/{__init__,base,provenance,solvers}.py and
+#                               tests/test_adapters.py
 # ---------------------------------------------------------------------------
-$EXPECTED_SWEEP_FILES = 39
+$EXPECTED_SWEEP_FILES = 44
 
 # The one seam. The reported expectation and the enforced expectation are the same value, read
 # through here, so the summary cannot describe a threshold the Gate is not applying.

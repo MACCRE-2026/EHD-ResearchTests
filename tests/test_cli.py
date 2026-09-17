@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from conftest import REFERENCE_PROFILE_PATH
 
-from ehdpsu import cli
+from ehdpsu import adapters, cli
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -374,6 +374,102 @@ class TestExitCodes:
             "new",
             "report",
             "crosscheck",
+            "doctor",
         }
         for name, sub in choices.items():
             assert sub.get_default("func") is not None, f"{name} has no handler"
+
+
+class TestDoctor:
+    """``ehdsuite doctor`` — the Task 12 demo, and the command an operator runs first.
+
+    Its whole job is to say what the suite cannot do. Every assertion here is about absence being
+    legible, because absence is the answer today: no FEMM, LTspice, QSPICE, Gmsh, Elmer, OpenFOAM or
+    ParaView run has occurred in this project.
+    """
+
+    def test_the_matrix_lists_every_registered_adapter(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert run("doctor") == cli.EXIT_OK
+        out = capsys.readouterr().out
+        for adapter in adapters.ADAPTERS:
+            assert adapter.name in out, f"{adapter.name} is registered but absent from the matrix"
+
+    def test_absent_tools_are_not_a_command_failure(self) -> None:
+        """Exit 0 with nothing installed.
+
+        An absent solver is the normal state of this repository. A non-zero exit would make the
+        ordinary condition indistinguishable from a defect, and the operator would learn to ignore
+        it.
+        """
+        assert run("doctor") == cli.EXIT_OK
+
+    def test_an_absent_capability_is_called_absent_rather_than_degraded(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The contract's wording, checked: absent, not degraded-but-fine."""
+        run("doctor")
+        out = capsys.readouterr().out
+        if adapters.unresolved_capabilities():
+            assert "ABSENT" in out
+            assert "not stand-ins" in out or "substitut" in out
+
+    def test_the_matrix_states_what_each_capability_would_provide(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A tool name alone does not tell an operator what installing it buys them."""
+        run("doctor")
+        out = capsys.readouterr().out
+        assert "capability" in out
+        assert "k_geo" in out, "the FEMM row does not say it is the route to calibrating k_geo"
+
+    def test_the_matrix_names_the_detectable_tools_that_have_no_adapter(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Silence about them would read as coverage.
+
+        Detection is implemented for seven tools and four of them have no adapter. Omitting that
+        from the matrix would let a reader conclude the suite drives everything it can detect.
+        """
+        run("doctor")
+        out = capsys.readouterr().out
+        for pending in ("gmsh", "elmer", "openfoam", "paraview"):
+            assert pending in out
+
+    def test_the_routes_tried_are_shown_so_absence_can_be_argued_with(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The Kiro CLI 2.21.4 case: a tool that was installed and working while a check said no.
+
+        Showing the routes lets an operator see *how* the conclusion was reached, and supply
+        ``--configured-path`` reasoning of their own if it looks wrong.
+        """
+        run("doctor")
+        assert "configured-path" in capsys.readouterr().out
+
+    def test_a_broken_adapter_exits_nonzero_and_is_distinguished_from_absence(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An adapter that raises is a defect in the suite; a missing tool is a fact about the
+        machine. Two different things, so two different exit codes."""
+
+        def explode(self: adapters.Adapter, configured_path: Path | None = None) -> object:
+            raise RuntimeError("probe exploded")
+
+        monkeypatch.setattr(adapters.Adapter, "detect", explode)
+        assert run("doctor") == cli.EXIT_ADAPTER_BROKEN
+        assert "raised while probing" in capsys.readouterr().err
+
+    def test_the_new_exit_code_collides_with_nothing(self) -> None:
+        codes = [
+            cli.EXIT_OK,
+            cli.EXIT_INVALID_PROFILE,
+            cli.EXIT_NOTHING_VALIDATED,
+            cli.EXIT_NOT_FOUND,
+            cli.EXIT_REFUSED_OVERWRITE,
+            cli.EXIT_CLAIM_INCONSISTENT,
+            cli.EXIT_ADAPTER_BROKEN,
+        ]
+        assert len(codes) == len(set(codes))
+        assert 2 not in codes, "2 is reserved: argparse exits 2 on a usage error"
