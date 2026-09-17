@@ -1,44 +1,35 @@
-"""Adapter detection layer.
+"""Tool detection and version capture for the external solvers.
 
-This module locates external tools used by the suite: FEMM, LTspice, QSPICE,
-Gmsh, Elmer, OpenFOAM, and ParaView. It returns a ToolProbe describing whether
-each tool was found, where, and what version it reports.
+Every adapter owes five obligations — detect, version, generate, run, parse. This module implements
+the first two.
 
-The detection layer is designed around three principles:
+The load-bearing property is **not** "finds tools". It is **never claims an absence it has not
+earned.** Kiro CLI 2.21.4 was installed and working on this machine while ``Get-Command kiro-cli``
+found nothing, because the shell had inherited its environment before the installer wrote the user
+``PATH``. Reporting a working tool as absent is *principle 2, an approximately-correct identifier is
+worse than an absent one* — a wrong non-empty answer propagates and gets acted on, while an
+inconclusive one degrades visibly. Hence three statuses rather than two, and hence
+``TOOL_UNRESOLVED`` wherever a route could not be attempted to a conclusion.
 
-1. Never claim an absence it has not earned. A tool may be TOOL_ABSENT only
-   when every route in ROUTE_ORDER was attempted and each reached a conclusion.
-   If any route could not conclude, the answer is TOOL_UNRESOLVED.
+The same principle governs the spec table, and it is why ``EXECUTABLE_PROVENANCE`` exists. A
+**guessed** executable name is the worst possible input here: it produces a confident
+``TOOL_ABSENT`` for a tool that is installed and working, which is exactly the failure this module
+was written to prevent. Two earlier revisions carried names that do not exist — ``ASCA.exe``,
+``ElmerMesh.exe``, ``OpenFOAM.exe`` — and nothing caught them, because a plausible filename is
+indistinguishable from a real one until somebody checks. Every name now cites where it was read, and
+a test refuses a name without a citation.
 
-2. Records are immutable. ToolProbe and ToolSpec are frozen dataclasses so a
-   probe is a record of what was observed, not something that can be edited
-   after the fact.
-
-3. No side effects at import time. Importing this module must not execute any
-   subprocess or write anything to disk. Detection happens only when the
-   caller explicitly asks.
-
-Five things were wrong with the first attempt and are now mechanically checked
-by test_detect.py:
-
-1. ROUTE_ORDER must be a published constant, not buried in control flow.
-2. ToolProbe and ToolSpec must be frozen dataclasses.
-3. routes_tried must record only routes that were actually attempted, in order,
-   and stop at the first route that resolves.
-4. TOOL_ABSENT requires every route to have been attempted and reached a
-   conclusion; off Windows this is unreachable because the registry route
-   cannot be attempted to a conclusion.
-5. version_args must be () for GUI-driven tools (manual_only=True).
-
+``tests/test_detect.py`` is the specification for the behaviour, and it was written before this
+module.
 """
 
 from __future__ import annotations
 
 import enum
-import os
-import stat
+import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,8 +38,12 @@ if sys.platform == "win32":
     import winreg
 
 __all__ = (
+    "EXECUTABLE_PROVENANCE",
+    "GUI_EXECUTABLES",
     "KNOWN_TOOLS",
     "ROUTE_ORDER",
+    "TOOLS_WITHOUT_A_VERSION_PROBE",
+    "TOOLS_WITHOUT_DEFAULT_PATHS",
     "ToolProbe",
     "ToolSpec",
     "ToolStatus",
@@ -56,6 +51,9 @@ __all__ = (
     "detect_tool",
 )
 
+# The four routes, in the order they are attempted. Published as a constant rather than left implicit
+# in control flow: an order buried in an if-chain cannot be asserted by a caller, and cannot be shown
+# to a human reading a probe to work out why their tool was not found.
 ROUTE_ORDER = (
     "configured-path",
     "process-path",
@@ -63,419 +61,481 @@ ROUTE_ORDER = (
     "default-paths",
 )
 
+_REGISTRY_PATH_SCOPES = (
+    ("HKEY_LOCAL_MACHINE", r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+    ("HKEY_CURRENT_USER", r"Environment"),
+)
 
-class ToolStatus(str, enum.Enum):
-    """Status of a tool probe.
 
-    PRESENT means the tool was found and is available.
-    TOOL_UNRESOLVED means the tool could not be located but absence has not
-        been established (for example, off Windows the registry route cannot
-        conclude).
-    TOOL_ABSENT means every route in ROUTE_ORDER was attempted and none
-        resolved.
+class ToolStatus(enum.Enum):
+    """What a probe concluded.
 
+    The distinction between the two negative statuses is the point of the module, so it is stated
+    here rather than left to the caller to infer.
     """
 
     PRESENT = "present"
+    """An executable was located. A version may or may not have been captured; see ``note``."""
+
     TOOL_UNRESOLVED = "tool-unresolved"
+    """Not located, **and absence was not established.** At least one route could not be attempted to
+    a conclusion — the registry was unreadable, ``winreg`` does not exist on this platform, or the
+    tool is not a Windows executable at all. Says nothing about whether the tool is installed."""
+
     TOOL_ABSENT = "tool-absent"
+    """Every route in ``ROUTE_ORDER`` was attempted, each reached a conclusion, and none resolved.
+    The only status that makes a positive claim about the world."""
 
 
-def _is_frozen_dataclass(cls: type) -> bool:
-    """True when cls is a dataclass declared frozen=True.
+@dataclass(frozen=True)
+class ToolSpec:
+    """How to look for one tool.
 
-    Read through getattr because __dataclass_params__ is undocumented as far as
-    the type checkers are concerned.
-
+    Frozen because a spec is reference data, and reference data a caller can edit in place is
+    reference data that will differ between two callers in the same process.
     """
-    if not hasattr(cls, "__dataclass_params__"):
-        return False
-    params = getattr(cls, "__dataclass_params__", None)
-    return bool(getattr(params, "frozen", False))
+
+    name: str
+
+    executables: tuple[str, ...]
+    """Filenames to look for, most-preferred first. Every entry needs an ``EXECUTABLE_PROVENANCE``
+    citation."""
+
+    default_paths: tuple[Path, ...]
+    """Known install directories. Empty is legitimate only with an entry in
+    ``TOOLS_WITHOUT_DEFAULT_PATHS`` saying why."""
+
+    version_args: tuple[str, ...]
+    """Arguments that make the tool print its version and exit. Empty means it cannot be asked, and
+    needs an entry in ``TOOLS_WITHOUT_A_VERSION_PROBE``."""
+
+    manual_only: bool = False
+    """GUI-driven: a human presses a button. Does **not** exempt the tool from detection; it means
+    ``run`` will later report as manual."""
+
+    windows_native: bool = True
+    """False when the tool has no native Windows executable — OpenFOAM, which runs under WSL2,
+    Docker, or the third-party blueCFD-Core port. For such a tool the four path-based routes cannot
+    conclude, so ``TOOL_ABSENT`` is unreachable and the honest answer is ``TOOL_UNRESOLVED``."""
+
+
+@dataclass(frozen=True)
+class ToolProbe:
+    """What one detection attempt observed.
+
+    Frozen because a probe is evidence. A record that can be edited after the fact is not evidence,
+    and an earlier revision allowed ``probe.status`` to be reassigned to ``present`` on a tool that
+    had never been found.
+    """
+
+    name: str
+    status: ToolStatus
+    path: Path | None
+
+    version: str | None
+    """Verbatim, exactly as the tool printed it. Never constructed, normalised, inferred or
+    defaulted. Trimming the captured text's own surrounding whitespace is the only alteration."""
+
+    routes_tried: tuple[str, ...]
+    """The routes **actually attempted**, in ``ROUTE_ORDER``. The search stops at the route that
+    resolves, and routes after it are not recorded. Recording a skipped route as tried is
+    *principle 3, never report success over unperformed work*, and it makes the ``TOOL_ABSENT``
+    invariant untestable."""
+
+    note: str | None = None
+    """Why the result is not self-explanatory. Required for ``TOOL_UNRESOLVED``, and for ``PRESENT``
+    with no version."""
+
+
+# ---------------------------------------------------------------------------
+# Where every executable name in KNOWN_TOOLS was read.
+#
+# The remedy for the worst defect this module has had. Filenames are not guessable: LTspice's binary
+# is XVIIx64.exe under XVII and LTspice.exe under 24, neither of which anyone would invent, while
+# ASCA.exe is exactly the kind of plausible name that does get invented and then produces a confident
+# false absence. test_every_executable_name_is_attributed refuses a name without an entry here.
+# ---------------------------------------------------------------------------
+EXECUTABLE_PROVENANCE: dict[str, str] = {
+    "femm.exe": (
+        "FEMM 4.2 installs to C:\\femm42\\ by default with the binary in its bin subdirectory - "
+        "https://nicadd.niu.edu/~syphers/tutorials/FEMMinstall.html"
+    ),
+    "LTspice.exe": (
+        "LTspice 24 installs under ADI\\LTspice and contains LTspice.exe - "
+        "https://uspas.fnal.gov/materials/25Knoxville/Accelerator-Power-Electronics/"
+        "InstructionstoInstallandUseLTspice24.pdf"
+    ),
+    "XVIIx64.exe": (
+        "LTspice XVII installs to C:\\Program Files\\LTC\\LTspiceXVII with the 64-bit binary named "
+        "XVIIx64.exe - https://uspas.fnal.gov/materials/22onlineTAMU/PowerElectronics/"
+        "Computer%20Lab/InstructionstoInstallandUseLTspiceXVII.pdf"
+    ),
+    "QSPICE64.exe": (
+        "Qorvo's forum documents invoking C:\\Program Files\\QSPICE\\QSPICE64.exe on a netlist - "
+        "https://forum.qorvo.com/t/qspice-not-responding/23100"
+    ),
+    "QSPICE80.exe": (
+        "the selective-80-bit-arithmetic build shipped alongside QSPICE64.exe - "
+        "https://forum.qorvo.com/t/running-qspice-from-command-line/14182"
+    ),
+    "gmsh.exe": (
+        "Gmsh ships for Windows as a portable archive containing gmsh.exe; its CLI is documented in "
+        "the reference manual - https://gmsh.info/doc/texinfo/"
+    ),
+    "ElmerSolver.exe": (
+        "Elmer's solution engine, documented as living in <install>\\bin - "
+        "https://www.elmerfem.org/forum/viewtopic.php?t=4058"
+    ),
+    "ElmerGrid.exe": (
+        "Elmer's mesh generator and importer, invoked as ElmerGrid.exe on Windows - "
+        "https://elmerfem.org/forum/viewtopic.php?p=31429"
+    ),
+    "ElmerGUI.exe": (
+        "Elmer's graphical preprocessor, named alongside ElmerSolver and ElmerGrid as one of the "
+        "package's main components - https://nic.csc.fi/pub/files/index/elmer/slides/ElmerIntro.pdf. "
+        "Listed in GUI_EXECUTABLES only; no spec detects it, because the adapter drives ElmerSolver."
+    ),
+    "pvpython.exe": (
+        "ParaView's headless Python client; -V/--version is common to all ParaView executables - "
+        "https://docs.paraview.org/en/latest/UsersGuide/commandLineArguments.html"
+    ),
+    "paraview.exe": (
+        "the ParaView GUI, in <install>\\bin - https://github.com/Kitware/paraviewweb/blob/master/"
+        "documentation/content/docs/windows_10.md"
+    ),
+    "simpleFoam.exe": (
+        "blueCFD-Core is the third-party native-Windows OpenFOAM port, installing by default to "
+        "C:\\Program Files\\blueCFD-Core <year>-<n> - https://github.com/blueCFD/Core/issues/257. "
+        "Recorded as a LEAD, not a verified filename: no blueCFD-Core installation was inspected, "
+        "which is why openfoam carries windows_native=False and can never report TOOL_ABSENT."
+    ),
+}
+
+# Tools whose `default_paths` is legitimately empty, with the reason. Mirrors the declared-exclusion
+# pattern the Gate and DESIGN_VALUE_EXEMPTIONS use: an empty tuple with no reason is
+# indistinguishable from an oversight, and an earlier revision emptied all seven silently.
+TOOLS_WITHOUT_DEFAULT_PATHS: dict[str, str] = {
+    "gmsh": (
+        "Gmsh is distributed for Windows as a portable archive with no installer, so there is no "
+        "standard directory to look in. An invented one would be a path that never resolves."
+    ),
+    "openfoam": (
+        "OpenFOAM has no native Windows build. It runs under WSL2 or Docker, which a Windows path "
+        "cannot reach, or via the third-party blueCFD-Core port whose directory carries a release "
+        "number no installation here has confirmed. windows_native is False in consequence."
+    ),
+}
+
+# Tools that cannot be asked for a version, with the reason. A headless tool with no version probe is
+# a gap rather than a neutral fact: solver-provenance requires a tool version before a run counts as
+# `solved` instead of `analytical-placeholder`.
+TOOLS_WITHOUT_A_VERSION_PROBE: dict[str, str] = {
+    "femm": (
+        "GUI-driven; asking femm.exe for a version launches it. The version comes from the operator "
+        "and is recorded in the solver-run provenance instead."
+    ),
+    "ltspice": "GUI-driven, and LTspice has no documented version-and-exit switch.",
+    "qspice": "GUI-driven; QSPICE64.exe expects a netlist argument, not a version query.",
+    "elmer": (
+        "NOT VERIFIED, and left unprobed deliberately. ElmerSolver's behaviour when invoked without "
+        "a .sif file is not established here, and a wrong switch risks a solver that waits on input "
+        "rather than exiting. An absent version degrades visibly; an invented one does not."
+    ),
+    "openfoam": (
+        "no native Windows executable to invoke. A version would have to come from inside WSL, "
+        "outside this module's four routes."
+    ),
+}
+
+# Executables that open a window when invoked, whatever arguments they are given. No spec carrying
+# `version_args` may list one, because the probe runs against whichever executable resolved — so a
+# GUI name anywhere in a probeable spec's list is a latent "launches an application during pytest".
+#
+# ParaView is the case that forced this to be a register rather than a use of `manual_only`. It is
+# GUI-driven for actual visualisation work, so `manual_only` is True, and it also ships a headless
+# client that accepts `--version`. Those are two different facts and one flag cannot carry both. The
+# spec therefore names `pvpython.exe` **only**: any real ParaView install has it beside `paraview.exe`
+# in the same `bin\`, and a hypothetical GUI-only install could not drive the adapter anyway. That
+# makes the hazard impossible by construction rather than prevented by vigilance.
+GUI_EXECUTABLES: frozenset[str] = frozenset(
+    {
+        "femm.exe",
+        "LTspice.exe",
+        "XVIIx64.exe",
+        "QSPICE64.exe",
+        "QSPICE80.exe",
+        "paraview.exe",
+        "ElmerGUI.exe",
+    }
+)
+
+KNOWN_TOOLS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="femm",
+        executables=("femm.exe",),
+        default_paths=(
+            Path(r"C:\femm42\bin"),
+            Path(r"C:\Program Files\femm42\bin"),
+            Path(r"C:\Program Files (x86)\femm42\bin"),
+        ),
+        version_args=(),
+        manual_only=True,
+    ),
+    ToolSpec(
+        name="ltspice",
+        executables=("LTspice.exe", "XVIIx64.exe"),
+        default_paths=(
+            Path(r"C:\Program Files\ADI\LTspice"),
+            Path(r"C:\ADI\LTspice"),
+            Path(r"C:\Program Files\LTC\LTspiceXVII"),
+            Path(r"C:\Program Files (x86)\LTC\LTspiceXVII"),
+        ),
+        version_args=(),
+        manual_only=True,
+    ),
+    ToolSpec(
+        name="qspice",
+        executables=("QSPICE64.exe", "QSPICE80.exe"),
+        default_paths=(
+            Path(r"C:\Program Files\QSPICE"),
+            Path(r"C:\Program Files (x86)\QSPICE"),
+        ),
+        version_args=(),
+        manual_only=True,
+    ),
+    ToolSpec(
+        name="gmsh",
+        # `-version`, single dash. Both earlier revisions used `--version`, which Gmsh does not
+        # accept, so the probe would have failed on an installed Gmsh and reported no version at all.
+        executables=("gmsh.exe",),
+        default_paths=(),
+        version_args=("-version",),
+        manual_only=False,
+    ),
+    ToolSpec(
+        name="elmer",
+        executables=("ElmerSolver.exe", "ElmerGrid.exe"),
+        default_paths=(
+            Path(r"C:\Program Files\Elmer 9.0\bin"),
+            Path(r"C:\Program Files (x86)\Elmer 9.0\bin"),
+        ),
+        version_args=(),
+        manual_only=False,
+    ),
+    ToolSpec(
+        name="openfoam",
+        executables=("simpleFoam.exe",),
+        default_paths=(),
+        version_args=(),
+        manual_only=False,
+        windows_native=False,
+    ),
+    ToolSpec(
+        name="paraview",
+        # pvpython.exe ONLY. See GUI_EXECUTABLES: listing paraview.exe here would mean a machine
+        # without pvpython gets its GUI launched by a version probe during a test run.
+        executables=("pvpython.exe",),
+        default_paths=(
+            Path(r"C:\Program Files\ParaView\bin"),
+            Path(r"C:\Program Files (x86)\ParaView\bin"),
+        ),
+        version_args=("--version",),
+        manual_only=True,
+    ),
+)
 
 
 def _read_registry_path_entries() -> list[Path]:
-    """Return all PATH entries from Machine and User registry scopes.
+    """Every ``PATH`` directory recorded in the Machine and User registry scopes.
 
-    Reads HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment
-    and HKEY_CURRENT_USER\\Environment.
+    One seam, for two reasons. It is the only way a test can make the registry route fail — access
+    spread inline through ``detect_tool`` would leave the ``TOOL_UNRESOLVED`` branch unreachable, so
+    it would only *look* covered. And it is where the Machine/User distinction lives: the Kiro CLI
+    incident was a **User**-scope write the process environment had not picked up, so reading only
+    the Machine scope would reproduce the original bug.
 
-    Returns a list of Path objects for each PATH segment that exists.
-
-    Raises OSError if the registry cannot be read.
-
+    Raises:
+        OSError: a scope exists but cannot be read. A scope that is simply **absent** is skipped
+            instead, because an absent scope is a conclusion while an unreadable one is not.
     """
-    paths: list[Path] = []
-
-    for hive, key_path in [
-        (
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-        ),
-        (winreg.HKEY_CURRENT_USER, r"Environment"),
-    ]:
+    entries: list[Path] = []
+    for hive_name, key_path in _REGISTRY_PATH_SCOPES:
+        hive = getattr(winreg, hive_name)
         try:
             with winreg.OpenKey(hive, key_path) as key:
-                value, _ = winreg.QueryValueEx(key, "PATH")
-                for segment in value.split(os.pathsep):
-                    if segment.strip():
-                        paths.append(Path(segment.strip()))
+                raw, _ = winreg.QueryValueEx(key, "PATH")
         except FileNotFoundError:
-            # The key or PATH value does not exist in this scope.
             continue
-        except OSError:
-            # Other registry errors are propagated.
-            raise
+        for segment in str(raw).split(";"):
+            text = segment.strip().strip('"')
+            if text:
+                entries.append(Path(text))
+    return entries
 
-    return paths
 
-
-def _find_exe_in_path(env_path: str, executables: tuple[str, ...]) -> Path | None:
-    """Return the first executable found in the PATH directories.
-
-    env_path is a PATH-style string (directories separated by os.pathsep).
-    executables is a tuple of candidate filenames.
-
-    Returns the full path to the first executable found, or None if none found.
-
-    """
-    for directory_str in env_path.split(os.pathsep):
-        directory = Path(directory_str.strip())
-        if not directory.is_dir():
-            continue
-        for exe_name in executables:
-            candidate = directory / exe_name
-            if _is_executable(candidate):
+def _in_directories(directories: Iterable[Path], executables: tuple[str, ...]) -> Path | None:
+    """First executable found by scanning ``directories`` in order, preferring earlier names."""
+    for directory in directories:
+        for name in executables:
+            candidate = directory / name
+            if candidate.is_file():
                 return candidate
     return None
 
 
-def _is_executable(path: Path) -> bool:
-    """True when path exists and has execute permission for the current user."""
-    if not path.exists():
-        return False
-    try:
-        mode = path.stat().st_mode
-        return bool(mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
-    except OSError:
-        return False
+def _resolve_configured(configured: Path, executables: tuple[str, ...]) -> Path | None:
+    """Resolve an operator-supplied override, which may name a directory or the file itself.
 
-
-def _probe_version(exe: Path, version_args: tuple[str, ...]) -> str | None:
-    """Run the executable with version_args and return the first line of output.
-
-    Returns the verbatim output (leading/trailing whitespace stripped), or None
-    if the probe fails or produces no output.
-
+    A file the operator named explicitly is accepted on the strength of them naming it, without
+    checking it against ``executables``: an override that has to match the built-in list can only
+    ever confirm what the built-in list already knew, which defeats the purpose of an override.
     """
-    if not version_args:
-        return None
-
-    try:
-        result = subprocess.run(
-            [str(exe), *version_args],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-
+    if configured.is_file():
+        return configured
+    if configured.is_dir():
+        return _in_directories((configured,), executables)
     return None
 
 
+def _resolve_process_path(executables: tuple[str, ...]) -> Path | None:
+    """``shutil.which`` per candidate name.
+
+    Deliberately ``shutil.which`` rather than a hand-rolled ``PATH`` walk: it honours ``PATHEXT`` and
+    the platform's own notion of executability. A hand-rolled version in an earlier revision required
+    a Unix execute bit, which no ordinary Windows file carries.
+    """
+    for name in executables:
+        found = shutil.which(name)
+        if found is not None:
+            return Path(found)
+    return None
+
+
+def _capture_version(executable: Path, version_args: tuple[str, ...]) -> str | None:
+    """Ask a located executable for its version, verbatim, or return ``None``.
+
+    Runs in a throwaway temporary directory so a tool that writes a log or a cache beside its
+    working directory cannot touch the caller's. Reads ``stdout`` and falls back to ``stderr``,
+    because Gmsh prints its version on ``stderr`` in some builds; whichever stream carried it, the
+    text is returned unaltered apart from trimming its own surrounding whitespace.
+    """
+    if not version_args:
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            completed = subprocess.run(
+                [str(executable), *version_args],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=scratch,
+                check=False,
+            )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    for stream in (completed.stdout, completed.stderr):
+        text = (stream or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _note_for_resolved(spec: ToolSpec, version: str | None) -> str | None:
+    """The one place a resolved probe's note is composed.
+
+    One place because an earlier revision built it at all four routes, eight duplicated lines each —
+    four representations of one rule, which *principle 4, two representations of one thing will
+    drift*, says will eventually disagree.
+    """
+    if version is not None:
+        return None
+    if not spec.version_args:
+        reason = TOOLS_WITHOUT_A_VERSION_PROBE.get(spec.name)
+        if reason is not None:
+            return f"located; no version probe available: {reason}"
+        return "located; this spec declares no version_args, so the tool was not asked"
+    return "located, but the version probe failed or printed nothing; version withheld rather than guessed"
+
+
 def detect_tool(spec: ToolSpec, configured_path: Path | None = None) -> ToolProbe:
-    """Locate a tool according to the routes in ROUTE_ORDER.
+    """Locate one tool, trying each route in ``ROUTE_ORDER`` until one resolves.
 
     Args:
-        spec: ToolSpec describing the tool to locate.
-        configured_path: An optional path the caller believes contains the tool.
-            May be a directory or a direct path to the executable.
+        spec: what to look for.
+        configured_path: an operator override, either the executable or a directory holding it.
 
     Returns:
-        ToolProbe describing the result.
-
+        A ``ToolProbe``. ``TOOL_ABSENT`` only when every route was attempted **and** each concluded.
     """
     routes_tried: list[str] = []
-    path: Path | None = None
-    version: str | None = None
-    note: str | None = None
+    inconclusive: list[str] = []
+    resolved: Path | None = None
 
-    # Route 1: configured path (always attempted, even when None)
     routes_tried.append("configured-path")
     if configured_path is not None:
-        resolved = _try_configured_path(configured_path, spec.executables)
-        if resolved is not None:
-            path = resolved
-            if spec.version_args:
-                version = _probe_version(path, spec.version_args)
-                if version is None:
-                    note = "version probe failed or produced no output"
-            if version is None and not spec.version_args:
-                note = "no version_args provided"
-            if version is None and spec.version_args and spec.manual_only:
-                note = "version probe skipped for manual_only tool"
-            return ToolProbe(
-                name=spec.name,
-                status=ToolStatus.PRESENT,
-                path=path,
-                version=version,
-                routes_tried=tuple(routes_tried),
-                note=note,
-            )
-    # configured_path was None or didn't resolve; fall through
+        resolved = _resolve_configured(configured_path, spec.executables)
 
-    # Route 2: process PATH
-    routes_tried.append("process-path")
-    env_path = os.environ.get("PATH", "")
-    resolved = _find_exe_in_path(env_path, spec.executables)
+    if resolved is None:
+        routes_tried.append("process-path")
+        resolved = _resolve_process_path(spec.executables)
+
+    if resolved is None:
+        routes_tried.append("windows-registry")
+        if sys.platform != "win32":
+            inconclusive.append(
+                "windows-registry could not be attempted: this is not Windows, so there is no "
+                "registry PATH to read"
+            )
+        else:
+            try:
+                resolved = _in_directories(_read_registry_path_entries(), spec.executables)
+            except OSError as exc:
+                inconclusive.append(f"windows-registry could not be read: {exc}")
+
+    if resolved is None:
+        routes_tried.append("default-paths")
+        resolved = _in_directories(spec.default_paths, spec.executables)
+
     if resolved is not None:
-        path = resolved
-        if spec.version_args:
-            version = _probe_version(path, spec.version_args)
-            if version is None:
-                note = "version probe failed or produced no output"
-        if version is None and not spec.version_args:
-            note = "no version_args provided"
-        if version is None and spec.version_args and spec.manual_only:
-            note = "version probe skipped for manual_only tool"
+        version = _capture_version(resolved, spec.version_args) if spec.version_args else None
         return ToolProbe(
             name=spec.name,
             status=ToolStatus.PRESENT,
-            path=path,
+            path=resolved,
             version=version,
             routes_tried=tuple(routes_tried),
-            note=note,
+            note=_note_for_resolved(spec, version),
         )
 
-    # Route 3: Windows registry PATH entries (Windows only)
-    if sys.platform == "win32":
-        routes_tried.append("windows-registry")
-        try:
-            registry_paths = _read_registry_path_entries()
-            for reg_path in registry_paths:
-                for exe_name in spec.executables:
-                    candidate = reg_path / exe_name
-                    if _is_executable(candidate):
-                        path = candidate
-                        if spec.version_args:
-                            version = _probe_version(path, spec.version_args)
-                            if version is None:
-                                note = "version probe failed or produced no output"
-                        if version is None and not spec.version_args:
-                            note = "no version_args provided"
-                        if version is None and spec.version_args and spec.manual_only:
-                            note = "version probe skipped for manual_only tool"
-                        return ToolProbe(
-                            name=spec.name,
-                            status=ToolStatus.PRESENT,
-                            path=path,
-                            version=version,
-                            routes_tried=tuple(routes_tried),
-                            note=note,
-                        )
-        except OSError:
-            # Registry unreadable; this route did not conclude.
-            note = "registry unreadable"
-            # Off Windows, TOOL_ABSENT is unreachable because windows-registry cannot
-            # conclude there. On Windows, if the registry is unreadable, absence
-            # has not been established.
-            return ToolProbe(
-                name=spec.name,
-                status=ToolStatus.TOOL_UNRESOLVED,
-                path=None,
-                version=None,
-                routes_tried=tuple(routes_tried),
-                note=note,
-            )
-    else:
-        # Non-Windows: record the route as attempted but it cannot conclude
-        routes_tried.append("windows-registry")
-
-    # Route 4: default paths
-    routes_tried.append("default-paths")
-    for default_path in spec.default_paths:
-        for exe_name in spec.executables:
-            candidate = default_path / exe_name
-            if _is_executable(candidate):
-                path = candidate
-                if spec.version_args:
-                    version = _probe_version(path, spec.version_args)
-                    if version is None:
-                        note = "version probe failed or produced no output"
-                if version is None and not spec.version_args:
-                    note = "no version_args provided"
-                if version is None and spec.version_args and spec.manual_only:
-                    note = "version probe skipped for manual_only tool"
-                return ToolProbe(
-                    name=spec.name,
-                    status=ToolStatus.PRESENT,
-                    path=path,
-                    version=version,
-                    routes_tried=tuple(routes_tried),
-                    note=note,
-                )
-
-    # All routes exhausted without resolution.
-    if sys.platform == "win32":
-        # Every route was attempted and none resolved.
-        return ToolProbe(
-            name=spec.name,
-            status=ToolStatus.TOOL_ABSENT,
-            path=None,
-            version=None,
-            routes_tried=tuple(routes_tried),
-            note=None,
+    if not spec.windows_native:
+        inconclusive.append(
+            "this tool has no native Windows executable, so a Windows path search cannot establish "
+            "its absence: "
+            + TOOLS_WITHOUT_DEFAULT_PATHS.get(spec.name, "see TOOLS_WITHOUT_DEFAULT_PATHS")
         )
-    else:
-        # Off Windows, the windows-registry route was attempted but could
-        # not be completed, so absence has not been established.
-        # routes_tried already includes windows-registry from above
+
+    if inconclusive:
         return ToolProbe(
             name=spec.name,
             status=ToolStatus.TOOL_UNRESOLVED,
             path=None,
             version=None,
             routes_tried=tuple(routes_tried),
-            note="Windows registry route cannot be attempted on this platform",
+            note="; ".join(inconclusive),
         )
 
-
-def _try_configured_path(configured: Path, executables: tuple[str, ...]) -> Path | None:
-    """Try to resolve an executable from a configured path.
-
-    configured may be a directory containing the executable, or a direct path
-    to the executable.
-
-    Returns the full path to the executable if found, else None.
-
-    """
-    if configured.is_file():
-        # Direct path to the executable
-        if _is_executable(configured):
-            return configured
-        return None
-
-    if configured.is_dir():
-        # Directory - look for one of the executables
-        for exe_name in executables:
-            candidate = configured / exe_name
-            if _is_executable(candidate):
-                return candidate
-        return None
-
-    # Doesn't exist or is neither file nor directory
-    return None
+    return ToolProbe(
+        name=spec.name,
+        status=ToolStatus.TOOL_ABSENT,
+        path=None,
+        version=None,
+        routes_tried=tuple(routes_tried),
+        note=None,
+    )
 
 
-def detect_all(specs: Iterable[ToolSpec] | None = None) -> list[ToolProbe]:
-    """Locate all known tools.
-
-    Args:
-        specs: An optional iterable of ToolSpecs to probe. Defaults to KNOWN_TOOLS.
-
-    Returns:
-        A list of ToolProbes, one per spec, in the order of specs.
-
-    """
-    if specs is None:
-        specs = KNOWN_TOOLS
+def detect_all(specs: Iterable[ToolSpec] = KNOWN_TOOLS) -> list[ToolProbe]:
+    """One probe per spec, in the order given."""
     return [detect_tool(spec) for spec in specs]
-
-
-@dataclass(frozen=True)
-class ToolSpec:
-    """Specification for locating a tool.
-
-    name: Human-readable identifier for the tool.
-    executables: Tuple of candidate filenames to look for.
-    default_paths: Tuple of directories to search as a last resort.
-    version_args: Command line arguments to ask for a version. () if none.
-    manual_only: True if this tool is GUI-driven and should not be version-probed.
-
-    """
-
-    name: str
-    executables: tuple[str, ...]
-    default_paths: tuple[Path, ...]
-    version_args: tuple[str, ...]
-    manual_only: bool = False
-
-
-@dataclass(frozen=True)
-class ToolProbe:
-    """Result of locating a tool.
-
-    name: The tool's name from its spec.
-    status: One of PRESENT, TOOL_UNRESOLVED, TOOL_ABSENT.
-    path: The full path to the executable if found, else None.
-    version: The verbatim version string if queried successfully, else None.
-    routes_tried: The routes that were attempted, in order.
-    note: Optional explanatory text for inconclusive or missing results.
-
-    """
-
-    name: str
-    status: ToolStatus
-    path: Path | None
-    version: str | None
-    routes_tried: tuple[str, ...]
-    note: str | None = None
-
-
-# Known tools the suite orchestrates.
-# Manual-only tools (GUIs) must have version_args=() to avoid launching them.
-KNOWN_TOOLS = (
-    ToolSpec(
-        name="femm",
-        executables=("femm.exe",),
-        default_paths=(),
-        version_args=(),
-        manual_only=True,
-    ),
-    ToolSpec(
-        name="ltspice",
-        executables=("Ltspice.exe", "ASCA.exe"),
-        default_paths=(),
-        version_args=(),
-        manual_only=True,
-    ),
-    ToolSpec(
-        name="qspice",
-        executables=("Qspice.exe",),
-        default_paths=(),
-        version_args=(),
-        manual_only=True,
-    ),
-    ToolSpec(
-        name="gmsh",
-        executables=("gmsh.exe", "gmsh"),
-        default_paths=(),
-        version_args=("--version",),
-        manual_only=False,
-    ),
-    ToolSpec(
-        name="elmer",
-        executables=("ElmerMesh.exe", "ElmerGrid.exe"),
-        default_paths=(),
-        version_args=(),
-        manual_only=False,
-    ),
-    ToolSpec(
-        name="openfoam",
-        executables=("OpenFOAM.exe",),
-        default_paths=(),
-        version_args=(),
-        manual_only=False,
-    ),
-    ToolSpec(
-        name="paraview",
-        executables=("paraview.exe",),
-        default_paths=(),
-        version_args=(),
-        manual_only=True,
-    ),
-)

@@ -145,6 +145,10 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 #   Adapter detection  600   <- detection layer (see the correction below)
 #   Path existence     601   <- every project path named in docs or printed output must exist
 #   Adapter detection  635   <- src/ehdpsu/detect.py, tests/test_detect.py (45 tests)
+#   Detection data     656   <- 21 invariants over the spec table itself: executable-name
+#                              provenance, declared default-path and version-probe gaps, the
+#                              published signature, version-probe isolation, GUI-launch hazard,
+#                              and no dead helpers
 #
 # Correction, 2026-09-16. The line now reading 600 previously read
 # "Task (this packet) 600   <- adapter detection: 21 new tests". Both halves were wrong, and both
@@ -160,7 +164,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 635
+$COLLECTED_FLOOR = 656
 
 $result = [ordered]@{
     status          = $null

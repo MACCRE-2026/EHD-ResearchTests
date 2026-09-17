@@ -1112,3 +1112,101 @@ down gets re-estimated from memory by the next session.
     landed after the seat finished, so they returned attempt 2 rather than the deleted attempt 1. A
     read that returns plausible content from the wrong moment is indistinguishable from a correct
     one, which is why this is recorded despite causing no damage.
+
+### 2026-09-16 — the detection layer's reference data, checked against vendor sources
+
+Closes findings 2 through 8 of the entry above. Each became an invariant rather than a patch,
+because a fix without a test does not survive the next implementation.
+
+- **Status:** COMPLETED
+- **Files:** `src/ehdpsu/detect.py` (rewritten), `tests/test_detect.py` (+21 tests, 45 → 66),
+  `.kiro/governance/gate.ps1` (floor 635 → 656).
+- **Signatures added:** `EXECUTABLE_PROVENANCE`, `GUI_EXECUTABLES`, `TOOLS_WITHOUT_DEFAULT_PATHS`,
+  `TOOLS_WITHOUT_A_VERSION_PROBE`, `ToolSpec.windows_native`, `_note_for_resolved`,
+  `_in_directories`, `_resolve_configured`, `_resolve_process_path`, `_capture_version`.
+- **Evidence — the vendor facts, each cited in `EXECUTABLE_PROVENANCE` at the point of use:**
+  - **FEMM 4.2** installs to `C:\femm42\` with the binary at `bin\femm.exe`.
+  - **LTspice** is `LTspice.exe` under version 24 (in `ADI\LTspice`) and `XVIIx64.exe` under XVII
+    (in `LTC\LTspiceXVII`). **`ASCA.exe` does not exist** — confirmed fabricated.
+  - **QSPICE** is `QSPICE64.exe` (and `QSPICE80.exe`) in `C:\Program Files\QSPICE`, per Qorvo's own
+    forum. `Qspice.exe` was wrong.
+  - **Elmer** ships `ElmerSolver.exe`, `ElmerGrid.exe` and `ElmerGUI.exe` in `<install>\bin`.
+    **`ElmerMesh.exe` does not exist** — confirmed fabricated.
+  - **OpenFOAM has no native Windows build.** It runs under WSL2 or Docker, or through the
+    third-party blueCFD-Core port (default `C:\Program Files\blueCFD-Core <year>-<n>`).
+    **`OpenFOAM.exe` does not exist** — confirmed fabricated.
+  - **ParaView** puts `paraview.exe`, `pvpython.exe` and `pvbatch.exe` in `<install>\bin`, and
+    `-V/--version` is documented as **common to every ParaView executable**.
+  - **Gmsh takes `-version`, one dash.** `--version` is not accepted. **Both earlier revisions had
+    `--version`**, so the probe would have failed against an installed Gmsh and reported no version
+    — a silent capability loss neither attempt's tests could see. Gmsh also has no Windows
+    installer, so its empty `default_paths` is a fact rather than an omission.
+- **Decision:**
+  - **`EXECUTABLE_PROVENANCE` is the structural remedy, not the corrected names.** A filename cannot
+    be inferred, only read, and three fabricated ones survived two implementations and several green
+    Gate runs because a plausible filename is indistinguishable from a real one. Requiring a cited
+    source at the point of use makes the guess the thing that fails.
+  - **Two declared registers rather than empty tuples** — `TOOLS_WITHOUT_DEFAULT_PATHS` and
+    `TOOLS_WITHOUT_A_VERSION_PROBE`, each demanding a reason of at least eight words, mirroring
+    `DESIGN_VALUE_EXEMPTIONS` and the Gate's declared exclusions. An earlier revision emptied all
+    seven `default_paths` silently; an empty tuple with no reason is indistinguishable from an
+    oversight. Rejected: inventing install paths to fill them. A path that never resolves is not an
+    improvement, and *principle 2, an approximately-correct identifier is worse than an absent one*,
+    cuts the other way here.
+  - **`ToolSpec.windows_native`, defaulting True.** OpenFOAM's absence cannot be established by a
+    Windows path search, so the four routes genuinely cannot conclude for it and `TOOL_UNRESOLVED`
+    is the correct answer forever. This is the existing status semantics applied correctly rather
+    than a special case.
+  - **`simpleFoam.exe` is carried and labelled a LEAD.** No blueCFD-Core installation was inspected.
+    A test asserts the label is present and that `windows_native` is False, so the unverified name
+    can never produce a claim of absence. *Principle 7, verified means reproduced*, applied to
+    reference data.
+  - **`elmer` stays unprobed, and says so.** ElmerSolver's behaviour without a `.sif` file was not
+    established, and a wrong switch risks a solver that waits on input rather than exiting. An
+    absent version degrades visibly; an invented switch would not. **Consequence stated rather than
+    buried:** an unprobeable tool caps at `analytical-placeholder` anything derived from a run of
+    it, because `solver-provenance` requires a tool version before a run counts as `solved`.
+  - **`GUI_EXECUTABLES` replaced a coarser invariant of my own.** The earlier test read "no
+    `manual_only` tool carries `version_args`", which failed on ParaView — a tool that is
+    GUI-driven for visualisation work *and* ships a headless client that answers `--version`. One
+    boolean cannot carry both facts. The invariant is now stated against the executables that
+    actually get invoked, and since the probe runs on whichever executable resolved, a GUI name
+    **anywhere** in a probeable spec's list is the hazard.
+    - ParaView's spec therefore names `pvpython.exe` **only**. Every real install has it beside
+      `paraview.exe` in the same `bin\`, and a GUI-only install could not drive the adapter anyway,
+      so nothing is lost and the launch-during-pytest hazard becomes impossible by construction
+      rather than prevented by vigilance. Rejected: a `version_probe_executables` subset field,
+      which is a second list that must stay a subset of the first.
+  - **`shutil.which` for the process-path route.** The previous revision hand-rolled a `PATH` walk
+    requiring a Unix execute bit, which no ordinary Windows file carries.
+  - **An operator-supplied file path is accepted without matching `executables`.** An override that
+    must match the built-in list can only confirm what the built-in list already knew.
+  - **`_capture_version` reads stderr as a fallback**, because Gmsh prints its version there in some
+    builds, and runs in a throwaway temp directory. Both are behaviour, so both have tests.
+- **Evidence — every new check has been seen to fail.** Seven defects were planted into `detect.py`
+  simultaneously — an unattributed executable name, a silently emptied `default_paths`, the default
+  moved out of `detect_all`'s signature, a dead private helper, the version probe's `cwd` removed,
+  Gmsh's switch changed to `--version`, and `paraview.exe` added back to a probeable spec. The suite
+  returned **8 failed / 58 passed**, each failure naming its specific offender. The file was then
+  restored from a copy taken outside the repository and the planted markers confirmed absent.
+- **Evidence — the Gate, captured to a file and read from it:** status **OK**, `EXIT=0`,
+  `pytest 656 collected / 656 passed at floor 656`,
+  `ruff=39 black=39 mypy=39 pyright=39 (expected >= 39)`,
+  `0 skipped, 0 xfail/xpass, 0 deselected`, 2 governance verifiers green.
+- **Inherited:**
+  - **No solver was run, and none of these names was observed resolving on this machine.** The
+    provenance entries are vendor documentation, which is a stronger basis than a guess and a weaker
+    one than an installation. Every path and filename here remains unexercised against a real
+    install; `detect_all()` on this machine resolves nothing.
+  - **`ElmerSolver`'s version switch is an open question**, and closing it needs an Elmer
+    installation rather than more reading.
+  - The blueCFD-Core directory carries a release number (`2024-1`, `2020`, …) that no glob here
+    matches, which is a second reason OpenFOAM's `default_paths` stays empty.
+  - `test_detection_writes_nothing_into_the_working_directory` still asserts more than it exercises
+    on a machine with no version-probeable tool installed.
+    `test_a_version_probe_runs_in_a_directory_it_was_given` now covers the same property by
+    inspecting the call, so the pair is honest, but the end-to-end path is unwitnessed.
+  - Forty-six background terminals accumulated over this session, and two shell calls returned empty
+    output at exit `-1` while the Gate was mid-run. Distinguished at the time rather than mistaken
+    for failures, per the recorded terminal-reality findings — but the accumulation is the condition
+    that produced them.

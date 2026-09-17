@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import inspect
 import subprocess
 import sys
 from pathlib import Path
@@ -171,19 +172,40 @@ class TestKnownTools:
                 f"flag distinguishes nothing"
             )
 
-    def test_no_manual_only_tool_is_version_probed(self) -> None:
+    def test_no_version_probe_targets_a_gui_executable(self) -> None:
         """A GUI executable is never asked for a version, because asking launches it.
 
-        ``paraview.exe --version`` opens a window on Windows. A test suite that runs ``detect_all``
-        would then launch a GUI on any machine where ParaView is installed, and the run would look
-        machine-dependent for reasons nobody could see in the test. A manual-only tool reports
-        ``version=None`` with a note; if a headless companion binary can be asked instead, it is a
-        separate ``ToolSpec`` with ``manual_only=False``, not a version probe bolted onto the GUI.
+        ``paraview.exe --version`` opens a window on Windows, so a suite that runs ``detect_all``
+        would launch an application on any machine where ParaView is installed — machine-dependent
+        behaviour for a reason invisible in the test.
+
+        **Amended 2026-09-16.** This test previously read "no ``manual_only`` tool carries
+        ``version_args``", which is a coarser claim than it meant and it failed on a tool that is
+        perfectly safe to probe. ParaView is GUI-driven for visualisation work *and* ships
+        ``pvpython.exe``, which accepts ``--version``; one boolean cannot carry both facts. The
+        invariant is therefore stated against the executables that actually get invoked. The probe
+        runs on whichever executable resolved, so a GUI name **anywhere** in a probeable spec's list
+        is the hazard, not just the first one.
         """
-        offenders = [s.name for s in detect.KNOWN_TOOLS if s.manual_only and s.version_args]
+        offenders = [
+            f"{spec.name}:{name}"
+            for spec in detect.KNOWN_TOOLS
+            if spec.version_args
+            for name in spec.executables
+            if name in detect.GUI_EXECUTABLES
+        ]
         assert not offenders, (
-            f"manual_only tools carry version_args: {offenders}. Probing a GUI executable for a "
-            f"version launches it."
+            f"version-probeable specs listing a GUI executable: {offenders}. The probe runs against "
+            f"whichever executable resolved, so this launches an application."
+        )
+
+    def test_the_gui_register_is_not_empty_and_names_real_executables(self) -> None:
+        """An empty hazard register would make the test above pass by vacuity."""
+        assert detect.GUI_EXECUTABLES, "GUI_EXECUTABLES is empty, so nothing is guarded against"
+        unknown = sorted(n for n in detect.GUI_EXECUTABLES if n not in detect.EXECUTABLE_PROVENANCE)
+        assert not unknown, (
+            f"GUI_EXECUTABLES names executables with no provenance entry: {unknown}. A hazard "
+            f"register built from guessed filenames guards against nothing."
         )
 
 
@@ -645,4 +667,378 @@ class TestThisSeamStaysChecked:
             f"coverage-reducing constructs in this seam: {offenders}. A platform-specific case is "
             f"injected at a seam instead, as test_an_unreadable_registry_is_unresolved_not_absent "
             f"does."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Added 2026-09-16, after the second implementation attempt.
+#
+# The tests above caught every defect they were written for. What they did not catch is the more
+# useful finding: the implementing seat satisfied every invariant that was written down and drifted
+# on every dimension that was not. It emptied all seven `default_paths` tuples, dropped Elmer's
+# version probe, changed `detect_all`'s published signature, ran version probes in the caller's
+# working directory, and — worst — carried three executable names that do not exist on any machine.
+#
+# None of that was a failure of the seat's reading. It was an absence in this file. So each gap
+# becomes an invariant here rather than a note in a ledger, because a fix without a test does not
+# survive the next implementation.
+# ---------------------------------------------------------------------------
+
+
+class TestExecutableNamesAreAttributed:
+    """The worst defect this module can have, and the only one with an external cause.
+
+    A wrong executable name yields a confident ``TOOL_ABSENT`` for a tool that is installed and
+    working — the precise failure the module exists to prevent, arriving through its reference data
+    rather than its logic. *Principle 2, an approximately-correct identifier is worse than an absent
+    one*, at the point where the identifier enters the system.
+
+    Three fabricated names survived two implementations and a Gate run: ``ASCA.exe`` for LTspice,
+    ``ElmerMesh.exe`` for Elmer, ``OpenFOAM.exe`` for OpenFOAM. No test could have distinguished
+    them from real ones, because a filename is only checkable against the vendor.
+    """
+
+    def test_every_executable_name_is_attributed(self) -> None:
+        unattributed = [
+            f"{spec.name}:{name}"
+            for spec in detect.KNOWN_TOOLS
+            for name in spec.executables
+            if name not in detect.EXECUTABLE_PROVENANCE
+        ]
+        assert not unattributed, (
+            f"executable names with no entry in EXECUTABLE_PROVENANCE: {unattributed}. A filename "
+            f"cannot be inferred, only read from the vendor. An unattributed name is a guess, and a "
+            f"guess here produces a false absence rather than an error."
+        )
+
+    def test_every_attribution_cites_a_source(self) -> None:
+        """A reason without a source is an assertion wearing a citation's clothes."""
+        uncited = [
+            name
+            for name, text in detect.EXECUTABLE_PROVENANCE.items()
+            if "http" not in text or len(text) < 40
+        ]
+        assert (
+            not uncited
+        ), f"EXECUTABLE_PROVENANCE entries with no URL or too terse to check: {uncited}"
+
+    def test_no_attribution_is_orphaned(self) -> None:
+        """The register documents the table, so it may not outlive it.
+
+        An entry for a name no spec uses is a stale citation, and a stale citation is what makes the
+        next reader trust the rest of the register less than they should.
+        """
+        in_use = {name for spec in detect.KNOWN_TOOLS for name in spec.executables}
+        # GUI_EXECUTABLES is the other legitimate consumer: a name may be cited because it must
+        # never be probed rather than because it is detected.
+        orphans = sorted(set(detect.EXECUTABLE_PROVENANCE) - in_use - detect.GUI_EXECUTABLES)
+        assert not orphans, (
+            f"EXECUTABLE_PROVENANCE cites names that no spec detects and no hazard register "
+            f"guards: {orphans}"
+        )
+
+
+class TestDeclaredGapsAreDeclared:
+    """Empty reference data is either a fact or an oversight, and only a register can tell them apart.
+
+    Both registers mirror ``DESIGN_VALUE_EXEMPTIONS`` and the Gate's declared exclusions: the escape
+    hatch exists, and using it costs a written reason. An earlier revision emptied every
+    ``default_paths`` tuple silently, so the ``default-paths`` route could not resolve anything and
+    nothing said so.
+    """
+
+    def test_every_tool_has_default_paths_or_a_declared_reason(self) -> None:
+        undeclared = [
+            spec.name
+            for spec in detect.KNOWN_TOOLS
+            if not spec.default_paths and spec.name not in detect.TOOLS_WITHOUT_DEFAULT_PATHS
+        ]
+        assert not undeclared, (
+            f"tools with no default_paths and no declared reason: {undeclared}. The default-paths "
+            f"route cannot resolve anything for them, which is a capability gap, not a neutral fact."
+        )
+
+    def test_every_tool_can_be_version_probed_or_a_declared_reason(self) -> None:
+        """A tool with no version probe cannot support a `solved` basis.
+
+        ``solver-provenance`` requires a tool version before a run counts as ``solved`` rather than
+        ``analytical-placeholder``, so an unprobeable tool caps the basis of everything derived from
+        it. That is a consequence worth declaring rather than discovering.
+        """
+        undeclared = [
+            spec.name
+            for spec in detect.KNOWN_TOOLS
+            if not spec.version_args and spec.name not in detect.TOOLS_WITHOUT_A_VERSION_PROBE
+        ]
+        assert (
+            not undeclared
+        ), f"tools that cannot be asked for a version, with no declared reason: {undeclared}"
+
+    @pytest.mark.parametrize(
+        "register", ["TOOLS_WITHOUT_DEFAULT_PATHS", "TOOLS_WITHOUT_A_VERSION_PROBE"]
+    )
+    def test_declared_reasons_are_substantive_and_not_orphaned(self, register: str) -> None:
+        """A one-word reason is a rubber stamp, and an entry for an unknown tool is stale."""
+        entries: dict[str, str] = getattr(detect, register)
+        known = {spec.name for spec in detect.KNOWN_TOOLS}
+        for name, reason in entries.items():
+            assert name in known, f"{register} names {name!r}, which is not a known tool"
+            assert len(reason.split()) >= 8, (
+                f"{register}[{name!r}] gives {reason!r}. A reason short enough to write without "
+                f"thinking is not a reason."
+            )
+
+    def test_an_unverified_name_says_so_where_it_is_used(self) -> None:
+        """``simpleFoam.exe`` is a lead, not a confirmed filename, and it is labelled as one.
+
+        No blueCFD-Core installation was inspected. Rather than drop the entry or present it as
+        checked, it is carried with ``windows_native=False`` so absence can never be claimed from it
+        — *principle 7, verified means reproduced*, applied to reference data.
+        """
+        text = detect.EXECUTABLE_PROVENANCE["simpleFoam.exe"]
+        assert "LEAD" in text.upper(), "the unverified OpenFOAM filename is not labelled as a lead"
+        by_name = {s.name: s for s in detect.KNOWN_TOOLS}
+        assert by_name["openfoam"].windows_native is False
+
+
+class TestToolsWithoutANativeWindowsBinary:
+    """OpenFOAM is not reachable by a Windows path search, so its absence cannot be established."""
+
+    def test_a_non_native_tool_is_never_reported_absent(self) -> None:
+        by_name = {s.name: s for s in detect.KNOWN_TOOLS}
+        probe = detect.detect_tool(by_name["openfoam"])
+        assert probe.status is not detect.ToolStatus.TOOL_ABSENT, (
+            "openfoam reported absent. It runs under WSL2, Docker, or a third-party port, none of "
+            "which a Windows path search reaches, so the four routes cannot conclude."
+        )
+
+    def test_a_non_native_tool_explains_itself(self) -> None:
+        spec = detect.ToolSpec(
+            name="openfoam",
+            executables=(UNRESOLVABLE_EXE,),
+            default_paths=(),
+            version_args=(),
+            windows_native=False,
+        )
+        probe = detect.detect_tool(spec)
+        assert probe.status is detect.ToolStatus.TOOL_UNRESOLVED
+        assert probe.note is not None and "native" in probe.note.lower()
+
+    def test_windows_native_defaults_to_true(self) -> None:
+        """The unusual case is the one that has to be declared, not the ordinary one."""
+        assert _unresolvable_spec().windows_native is True
+
+
+class TestThePublishedInterfaceDoesNotDrift:
+    """A signature is part of the contract, and an equivalent-but-different one is still a change."""
+
+    def test_detect_all_defaults_to_known_tools_in_its_signature(self) -> None:
+        """The default belongs in the signature, where a reader and a type checker both see it.
+
+        An earlier revision took ``Iterable[ToolSpec] | None = None`` and resolved the default in the
+        body. Behaviourally identical for every caller, and undetectable from the outside, which is
+        why it needs asserting rather than reviewing: the published interface is what other adapters
+        will be written against.
+        """
+        default = inspect.signature(detect.detect_all).parameters["specs"].default
+        assert default is detect.KNOWN_TOOLS, (
+            f"detect_all's specs default is {default!r}, not KNOWN_TOOLS. A default resolved inside "
+            f"the body is invisible in the signature and in help()."
+        )
+
+    def test_the_module_exports_what_the_contract_names(self) -> None:
+        expected = {
+            "EXECUTABLE_PROVENANCE",
+            "GUI_EXECUTABLES",
+            "KNOWN_TOOLS",
+            "ROUTE_ORDER",
+            "TOOLS_WITHOUT_A_VERSION_PROBE",
+            "TOOLS_WITHOUT_DEFAULT_PATHS",
+            "ToolProbe",
+            "ToolSpec",
+            "ToolStatus",
+            "detect_all",
+            "detect_tool",
+        }
+        assert (
+            set(detect.__all__) == expected
+        ), f"__all__ is {sorted(detect.__all__)}; the contract names {sorted(expected)}"
+
+
+class TestVersionProbeIsolation:
+    """A version probe runs somewhere disposable, because some tools write beside their cwd."""
+
+    def test_a_version_probe_runs_in_a_directory_it_was_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Asserted by inspecting the call, not by looking for droppings afterwards.
+
+        ``test_detection_writes_nothing_into_the_working_directory`` passed on this machine only
+        because no version-probeable tool resolved here, so it asserted the invariant without
+        exercising it. Capturing the ``cwd`` keyword tests the same property on any machine.
+        """
+        work = tmp_path / "caller_cwd"
+        work.mkdir()
+        monkeypatch.chdir(work)
+
+        seen: list[object] = []
+
+        class Completed:
+            returncode = 0
+            stdout = "STAND-IN 1.0\n"
+            stderr = ""
+
+        def record(*_a: object, **kw: object) -> Completed:
+            seen.append(kw.get("cwd"))
+            return Completed()
+
+        monkeypatch.setattr(detect.subprocess, "run", record)
+
+        exe, _ = _fake_tool(tmp_path, filename="probeme.exe")
+        spec = detect.ToolSpec(
+            name="probeme",
+            executables=("probeme.exe",),
+            default_paths=(),
+            version_args=("--version",),
+            manual_only=False,
+        )
+        probe = detect.detect_tool(spec, configured_path=exe)
+
+        assert probe.version == "STAND-IN 1.0"
+        assert seen, "no subprocess call was recorded, so the probe did not run"
+        cwd = seen[0]
+        assert cwd is not None, (
+            "the version probe inherited the caller's working directory. A tool that writes a log "
+            "or a cache beside its cwd would then write it into the caller's."
+        )
+        assert Path(str(cwd)).resolve() != work.resolve()
+
+    def test_a_version_on_stderr_is_still_captured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gmsh prints its version on stderr in some builds.
+
+        Reading stdout alone would report no version from an installed, working Gmsh — a missing
+        version rather than a wrong one, so it degrades visibly, but it degrades for no reason.
+        """
+
+        class Completed:
+            returncode = 0
+            stdout = "   \n"
+            stderr = "  4.15.2  \n"
+
+        monkeypatch.setattr(detect.subprocess, "run", lambda *_a, **_k: Completed())
+
+        exe, _ = _fake_tool(tmp_path, filename="stderrtool.exe")
+        spec = detect.ToolSpec(
+            name="stderrtool",
+            executables=("stderrtool.exe",),
+            default_paths=(),
+            version_args=("-version",),
+            manual_only=False,
+        )
+        probe = detect.detect_tool(spec, configured_path=exe)
+        assert probe.version == "4.15.2"
+
+    def test_a_nonzero_exit_is_not_a_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Output from a failed invocation is a usage message, not a version."""
+
+        class Failed:
+            returncode = 1
+            stdout = "usage: tool [options]\n"
+            stderr = "unrecognised option\n"
+
+        monkeypatch.setattr(detect.subprocess, "run", lambda *_a, **_k: Failed())
+
+        exe, _ = _fake_tool(tmp_path, filename="grumpy.exe")
+        spec = detect.ToolSpec(
+            name="grumpy",
+            executables=("grumpy.exe",),
+            default_paths=(),
+            version_args=("--version",),
+            manual_only=False,
+        )
+        probe = detect.detect_tool(spec, configured_path=exe)
+        assert probe.version is None
+        assert probe.note is not None and probe.note.strip()
+
+
+class TestGmshVersionSwitch:
+    def test_gmsh_asks_with_a_single_dash(self) -> None:
+        """``-version``, not ``--version``. Both earlier revisions had it wrong.
+
+        Gmsh's documented general options list ``-version`` with one dash. The wrong switch does not
+        error visibly: the probe fails, the version comes back ``None``, and an installed Gmsh looks
+        like one that cannot report a version. A silent capability loss is the hardest kind to notice,
+        which is why the switch is pinned here rather than trusted to the table.
+        """
+        by_name = {s.name: s for s in detect.KNOWN_TOOLS}
+        assert by_name["gmsh"].version_args == ("-version",), (
+            f"gmsh version_args is {by_name['gmsh'].version_args}; Gmsh takes -version with a "
+            f"single dash - https://manpages.ubuntu.com/manpages/noble/man1/gmsh.1.html"
+        )
+
+    def test_paraview_is_detected_only_through_its_headless_client(self) -> None:
+        """``pvpython.exe`` and nothing else, so a version probe can never open a window.
+
+        Any real ParaView install carries ``pvpython.exe`` beside ``paraview.exe`` in the same
+        ``bin\\``, and a GUI-only install could not drive the adapter regardless — the visualization
+        path renders through ``pvpython``. So excluding the GUI name loses no detection and removes
+        the hazard by construction. ``-V/--version`` is documented as common to every ParaView
+        executable.
+        """
+        by_name = {s.name: s for s in detect.KNOWN_TOOLS}
+        assert by_name["paraview"].executables == ("pvpython.exe",), (
+            f"paraview executables are {by_name['paraview'].executables}; adding a GUI name back "
+            f"reintroduces the launch-during-pytest hazard"
+        )
+        assert by_name["paraview"].version_args == ("--version",)
+
+
+class TestNoDeadCode:
+    def test_every_private_helper_is_used(self) -> None:
+        """A helper nobody calls was copied in, not written.
+
+        ``_is_frozen_dataclass`` was lifted verbatim out of this test file into the implementation and
+        never called. Ruff does not flag an unused module-level function, so nothing said so. Dead
+        code is not merely untidy here: it reads as a capability the module has, and the next author
+        wires it up rather than asking whether it was ever wanted.
+        """
+        tree = ast.parse(Path(detect.__file__).read_text(encoding="utf-8"))
+        defined = {
+            node.name
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("_")
+        }
+        called = {
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+        unused = sorted(defined - called)
+        assert (
+            not unused
+        ), f"private helpers defined and never referenced in {Path(detect.__file__).name}: {unused}"
+
+    def test_the_probe_record_is_built_in_few_enough_places_to_stay_consistent(self) -> None:
+        """The note rule lived at all four routes once, eight duplicated lines each.
+
+        Four representations of one rule is *principle 4, two representations of one thing will
+        drift*, and the drift here would be four probes disagreeing about what a missing version
+        means. Bounded rather than forbidden: a resolved probe and the two unresolved outcomes are
+        genuinely different records.
+        """
+        tree = ast.parse(Path(detect.__file__).read_text(encoding="utf-8"))
+        constructions = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ToolProbe"
+        ]
+        assert len(constructions) <= 3, (
+            f"ToolProbe is constructed in {len(constructions)} places. Each carries its own note "
+            f"logic, and they will disagree."
         )
