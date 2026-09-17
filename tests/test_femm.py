@@ -85,14 +85,87 @@ def test_parameter_substitution(lua: str) -> None:
     assert re.search(rf"^d_gap\s*=\s*{re.escape(repr(d_gap_mm))}", lua, re.MULTILINE)
 
 
-def test_readback_guidance_present(lua: str) -> None:
-    """The script documents how to read max field and cell capacitance."""
+def test_readback_is_computed_not_merely_documented(lua: str) -> None:
+    """The script COMPUTES and prints both readings, rather than describing where to click.
+
+    Strengthened 2026-09-16, after the script's first-ever run in FEMM. This test previously
+    asserted that the prose contained the strings ``2 * W / V_op^2`` and ``Q / V_op`` — that is,
+    that the script *told the operator* how to read the values by hand. It passed for the entire
+    life of a script that **could not solve at all**, which is the point: a test over generated text
+    cannot see whether the tool accepts it.
+
+    Reading by hand is also where a transcription error enters. So the requirement is now the
+    stronger one: the script performs both capacitance routes itself and prints them, and it prints
+    the field. A ratio between the two routes is printed as well, because they are a cross-check and
+    a disagreement is a finding rather than a choice.
+    """
     assert "capacitance" in lua.lower()
-    # Both capacitance routes are documented.
-    assert "2 * W / V_op^2" in lua or "2*W" in lua
-    assert "Q / V_op" in lua or "Q/V" in lua
+
+    # Route (a), stored energy, computed rather than described.
+    assert "eo_blockintegral(0)" in lua, "the stored-energy integral is not performed"
+    assert "C_from_energy" in lua
+
+    # Route (b), emitter charge. Note the PLURAL function name: eo_getconductorproperty, which
+    # this script named for months, does not exist in FEMM.
+    assert "eo_getconductorproperties" in lua, "the conductor-charge route is not performed"
+    assert "eo_getconductorproperty(" not in lua, (
+        "the script calls eo_getconductorproperty (singular), which is not a FEMM function; "
+        "the name is eo_getconductorproperties"
+    )
+    assert "C_from_charge" in lua
+
+    # The two routes are compared, not silently reconciled.
+    assert "route ratio" in lua
+
+    # The field is probed, and at more than one radius so the reading's sensitivity is visible.
+    assert "eo_getpointvalues" in lua
+    assert lua.count("probe_ring(") >= 4, (
+        "the surface field is sampled at fewer than three radii, so the reading is reported "
+        "without the spread that quantifies it"
+    )
+
     # Field cross-check against Peek's analytical prediction.
     assert "E_peek" in lua
+
+
+def test_the_lua_is_written_for_the_dialect_femm_actually_embeds(lua: str) -> None:
+    """FEMM 4.2 embeds Lua 4, where ``sqrt`` and ``format`` are globals.
+
+    There is no ``math`` table and no ``string`` table, so ``math.sqrt(...)`` raises. FEMM's own
+    readme refers to "the Lua format command", which is what established the dialect here. The
+    script carries a shim that binds the globals from the Lua 5 tables when they are missing, so it
+    runs under either — and that shim is the only place the table forms may appear.
+    """
+    for line in lua.splitlines():
+        if "math." in line or "string." in line:
+            assert line.strip().startswith("if not "), (
+                f"Lua 5 table access outside the compatibility shim: {line.strip()!r}. FEMM 4.2 "
+                f"embeds Lua 4 and has no math or string table."
+            )
+    assert "if not sqrt then" in lua, "no Lua 4/5 compatibility shim"
+
+
+def test_every_enclosed_region_gets_a_block_label(lua: str) -> None:
+    """Three closed regions, three labels. This is the defect that stopped the first run.
+
+    FEMM refuses to solve with "Material properties have not been defined for all regions" if any
+    region a closed boundary encloses has no block label. This geometry closes three, and the script
+    placed one:
+
+      * the main air region above the collector and outside the wire;
+      * the wire interior — two 180-degree arcs form a closed circle;
+      * the region below the collector — ``collector_hw`` equals ``outer_r``, so the plate's end
+        nodes land on the side walls and partition the box.
+
+    The count is asserted rather than the positions, because the positions are expressions in the
+    generated script. A fourth region added later without a label fails here rather than in FEMM.
+    """
+    assert lua.count("ei_addblocklabel(") == 3, (
+        f"{lua.count('ei_addblocklabel(')} block label(s) for three enclosed regions. FEMM will "
+        f"refuse to solve, and the failure appears as a missing .res file when ei_loadsolution "
+        f"finds no solution to load."
+    )
+    assert "ei_addblocklabel(0, 0)" in lua, "the wire interior has no block label"
 
 
 def test_local_run_header_present(lua: str) -> None:

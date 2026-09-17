@@ -157,6 +157,11 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 #                              (`configured-path`) could never be populated: two working installs
 #                              reported tool-absent. tools.local.json, plus the invariant that a
 #                              stale configured path is never silent
+#   FEMM first run     844   <- running the Lua script for the first time found it could not
+#                              solve at all: one block label for three enclosed regions, and a
+#                              read-back naming a FEMM function that does not exist. Checks on
+#                              the label count, the Lua 4 dialect, and computed-not-described
+#                              read-back
 #
 # Correction, 2026-09-16. The line now reading 600 previously read
 # "Task (this packet) 600   <- adapter detection: 21 new tests". Both halves were wrong, and both
@@ -172,7 +177,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 842
+$COLLECTED_FLOOR = 844
 
 $result = [ordered]@{
     status          = $null
