@@ -153,6 +153,10 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 #                              gate, `ehdsuite doctor`, and mechanical attribution. Most of the
 #                              148 are parameterised over the registry, so a fourth adapter
 #                              raises this count without a new test being written
+#   Task 13.0          842   <- installing the solvers exposed that detection route 1
+#                              (`configured-path`) could never be populated: two working installs
+#                              reported tool-absent. tools.local.json, plus the invariant that a
+#                              stale configured path is never silent
 #
 # Correction, 2026-09-16. The line now reading 600 previously read
 # "Task (this packet) 600   <- adapter detection: 21 new tests". Both halves were wrong, and both
@@ -168,7 +172,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 804
+$COLLECTED_FLOOR = 842
 
 $result = [ordered]@{
     status          = $null
@@ -294,8 +298,9 @@ function Invoke-Stage {
 #   Adapter detection   39   <- src/ehdpsu/detect.py, tests/test_detect.py
 #   Task 12             44   <- src/ehdpsu/adapters/{__init__,base,provenance,solvers}.py and
 #                               tests/test_adapters.py
+#   Task 13.0           45   <- src/ehdpsu/adapters/toolconfig.py
 # ---------------------------------------------------------------------------
-$EXPECTED_SWEEP_FILES = 44
+$EXPECTED_SWEEP_FILES = 45
 
 # The one seam. The reported expectation and the enforced expectation are the same value, read
 # through here, so the summary cannot describe a threshold the Gate is not applying.

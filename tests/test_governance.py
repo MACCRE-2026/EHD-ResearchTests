@@ -1296,3 +1296,41 @@ def test_every_project_path_named_in_docs_and_output_exists() -> None:
         f"these paths are named in tracked documents or source but do not exist "
         f"(searched {len(searched)} files):\n" + "\n".join(sorted(set(findings)))
     )
+
+
+def test_the_machine_local_tool_config_is_ignored() -> None:
+    """``tools.local.json`` holds absolute paths on one machine and must never be pushed.
+
+    It exists because installing the solvers on 2026-09-16 exposed a structural gap: ``configured-
+    path`` is the **first** route in ``detect.ROUTE_ORDER`` and nothing in the suite could populate
+    it. LTspice at ``B:\\LTspice`` and QSPICE at ``B:\\QSPICE`` were both installed and working, and
+    both reported ``tool-absent`` — correctly by the contract's own definition, since all four routes
+    were attempted and each concluded, and wrongly in the only sense that matters.
+
+    The file is configuration, not repository content. Leaked, it would publish one operator's
+    directory layout and would be wrong in every clone — an approximately-correct path for everybody
+    else, which is *principle 2, an approximately-correct identifier is worse than an absent one*,
+    applied to the fix rather than the defect.
+
+    Checked with ``--no-index`` so the answer holds whether or not the file exists locally.
+    """
+    code = _check_ignore("tools.local.json")
+    assert code == 0, (
+        f"tools.local.json is NOT ignored by git (check-ignore exit {code}). It names absolute "
+        f"paths on one machine; publishing it would hand every clone a set of wrong tool locations."
+    )
+
+
+def test_the_machine_local_tool_config_is_not_tracked() -> None:
+    """Ignored is not the same as absent from the index.
+
+    A file added before the ignore rule stays tracked and keeps being committed, with ``.gitignore``
+    saying nothing about it — the failure mode recorded in this file's own ``.gitkeep`` incident,
+    where four generated files sat tracked inside a folder everyone believed was ignored.
+    ``git ls-files`` is the authoritative tracked check; ``git status`` is not.
+    """
+    tracked = _git("ls-files", "--", "tools.local.json").strip()
+    assert not tracked, (
+        "tools.local.json is in the git index despite being ignored. Remove it with "
+        "`git rm --cached tools.local.json`; the ignore rule does not retroactively untrack."
+    )

@@ -408,6 +408,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "elsewhere in this suite are not stand-ins for a solve, and no result may be called\n"
             "`solved` without a run record carrying tool version, input hash and values read back."
         )
+        # Said here because the alternative is an operator concluding their working install is
+        # undetectable. A tool installed outside its vendor's default directory resolves through no
+        # other route: the process PATH and the registry PATH scopes will not know about it either.
+        config = adapters.tool_config_path()
+        print(
+            f"\nIf a tool above IS installed, its location is not on the process PATH, not in "
+            f"either\nregistry Path scope, and not in a known default directory. Tell the suite "
+            f"where it is:\n\n  {config}\n\n"
+            f"holding, for example:\n\n"
+            + "\n".join(f"  {line}" for line in adapters.config_template().splitlines())
+            + "\n\nThat file is untracked by design — the paths in it are true only on this "
+            "machine.\nA configured path that stops resolving is reported in the note rather than "
+            "ignored,\nso a moved install cannot silently become a fresh absence."
+        )
     else:
         print(f"All {len(rows)} registered tool(s) resolved.")
 

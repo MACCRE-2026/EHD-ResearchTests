@@ -1300,3 +1300,105 @@ because a fix without a test does not survive the next implementation.
     but its usability is untested, and Task 13 is where that becomes a finding.
   - `RunRecord` is written but **no run record exists**; `artifacts/05_Solver_Runs/` is still empty.
   - Four tools remain unadapted. `detect` covers seven; the other four obligations cover three.
+
+### 2026-09-16 — Task 13.0: the solvers are installed, and installing them found a real gap
+
+The first exercise of the detection layer against real installations. It validated the reference data
+and exposed a structural hole that no test could have found, because the hole was that a route had
+never been reachable.
+
+- **Status:** COMPLETED for 13.0 and for the gap it exposed. 13.1 and 13.2 are now unblocked.
+- **Files:** `src/ehdpsu/adapters/toolconfig.py` (new), `src/ehdpsu/adapters/base.py`
+  (`Adapter.detect` consults the config), `src/ehdpsu/detect.py` (`_join_notes`, stale-configured-path
+  reporting), `src/ehdpsu/adapters/__init__.py` (re-exports), `src/ehdpsu/cli.py` (`doctor` tells the
+  operator how to configure a path), `.gitignore` (`tools.local.json`, plus a stale fixture filename
+  corrected in a comment), `tests/test_adapters.py` (+27), `tests/test_detect.py` (+6),
+  `tests/test_governance.py` (+2), `.kiro/governance/gate.ps1` (floor 804 → 842, breadth 44 → 45).
+  Untracked: `tools.local.json`.
+- **Evidence — what the operator installed, observed on disk rather than reported:**
+  - `C:\femm42\bin\femm.exe` — the **vendor default, exactly as cited**.
+  - `B:\LTspice\LTspice.exe` — non-default location, operator's choice.
+  - `B:\QSPICE\QSPICE64.exe` and `B:\QSPICE\QSPICE80.exe` — non-default location.
+- **Evidence — the reference data held up.** Every executable **filename** in
+  `EXECUTABLE_PROVENANCE` was confirmed by direct observation: `femm.exe`, `LTspice.exe`,
+  `QSPICE64.exe`, `QSPICE80.exe`. `LTspice.exe` is notable because the citation was for LTspice **24**
+  and the installed release is **26.0.2** — the filename survived the major version. FEMM's
+  `default_paths` entry `C:\femm42\bin` resolved unaided, so the `default-paths` route has now fired
+  productively for the first time.
+- **Evidence — the registry route works.** `_read_registry_path_entries()` returned **34** real Path
+  entries from the Machine and User scopes, with neither tool among them. Worth recording separately:
+  had that function silently returned an empty list, every probe would still have reported "route
+  concluded" and there would have been no way to tell. It was checked rather than assumed.
+- **The finding.** `ehdsuite doctor` reported LTspice and QSPICE as **`tool-absent` while both were
+  installed and working.** The status was **correct by the contract's own definition** — all four
+  routes were attempted, each reached a conclusion, none resolved — and the outcome was the single
+  thing this module exists to prevent. `TOOL_ABSENT` is the only status that makes a positive claim
+  about the world, so being wrong about it is worse than the inconclusive answer.
+  - **Root cause: `configured-path` is the first route in `ROUTE_ORDER` and nothing in the suite could
+    populate it.** `detect_tool` accepted the argument, the adapters called `detect()` with no
+    argument, and the CLI offered no way to pass one. The route was recorded as attempted on every
+    probe in the project's history and could never have resolved anything.
+  - **No test could have caught this.** Every invariant about route 1 was satisfied: it was attempted,
+    it was recorded first, it fell through correctly, and a supplied path resolved when one was
+    supplied in a test. The defect was that nothing in production ever supplied one. That is a seam
+    the tests visit and the running system does not — *principle 6, a green test suite is not evidence
+    of a working system*, in its exact shape.
+- **Decision — where machine-local tool paths live:**
+  - **`tools.local.json` at the repository root, untracked.** Two governance tests assert it is ignored
+    and not in the index.
+  - **Not the profile.** A profile is a portable description of a *design*; an install path is a fact
+    about *this machine*. Putting one in the other would make profiles non-portable and would widen
+    "the profile is the seam for design values" to cover something that is not a design value.
+  - **Not an environment variable.** The stale-environment hazard is this module's origin story — Kiro
+    CLI 2.21.4 installed and working while `Get-Command` found nothing. An env var carrying a tool path
+    inherits that failure mode and is invisible when wrong. A file can be read, reviewed and diffed.
+  - **One mechanism, not both.** A file plus an env var is two representations with a precedence rule
+    nobody remembers — *principle 4, two representations of one thing will drift*.
+  - **A malformed config raises; an absent one does not.** Absent is the normal case and returns `{}`,
+    because requiring a config to detect a vendor-default install would be a worse default than none —
+    and FEMM proves it, resolving unconfigured. Every other malformation raises, because silently
+    skipping a bad config makes a typo indistinguishable from no configuration, and the operator would
+    see `tool-absent` for a tool they had just located.
+  - **An unknown tool name is refused** rather than ignored, for the same reason: a mistyped name would
+    be silently unconfigured, which looks exactly like a tool that is not installed.
+  - **A relative path is refused.** The same config would find the tool from one working directory and
+    not another.
+  - **The loader does not check existence.** That is `detect_tool`'s business, and collapsing
+    "configured nothing" into "configured something that has moved" would hide the second.
+- **Decision — a stale configured path is never silent.** If a configured path is supplied and does not
+  resolve, the probe says so **even when a later route succeeds**. Otherwise an install that moves
+  leaves the tool still being found, the probe still reading `present`, and the operator never learning
+  that the entry they wrote has stopped doing anything. *Principle 3, never report success over
+  unperformed work*, applied to a route that was attempted and failed rather than skipped. Notes are
+  now joined rather than replaced, so the stale-config warning and the no-version-probe reason both
+  survive; a test asserts that specifically.
+- **Evidence — the result.** All three tools now report `present`. LTspice and QSPICE resolve with
+  `routes_tried == ("configured-path",)`, confirming the search stops at the route that resolves.
+  Gate captured to a file: status **OK**, `EXIT=0`, `pytest 842 collected / 842 passed at floor 842`,
+  `ruff=45 black=45 mypy=45 pyright=45`, `0 skipped, 0 xfail/xpass, 0 deselected`.
+- **Inherited — a second finding, recorded and deliberately NOT implemented:**
+  - **LTspice records its own install location and version in the registry.**
+    `HKCU\Software\Analog Devices Inc.\LTspice` holds `Version = 26.0.2.1` and `Path = B:\LTspice\`,
+    and the Uninstall entry carries `DisplayVersion 26.0.2.1` / `InstallLocation B:\LTspice\`. That is
+    **authoritative, written by the installer**, and it would have found LTspice at its non-default
+    path with zero operator configuration. It also means **LTspice's version is readable without
+    launching the GUI**, which would move it off `TOOLS_WITHOUT_A_VERSION_PROBE`.
+  - This implies a **fifth detection route** — an *application* registry route, distinct from the
+    existing PATH-scope route — sitting between `process-path` and `windows-registry`. A vendor's own
+    recorded location is more specific and more authoritative than scanning PATH.
+  - **Not done here, on purpose.** It changes `ROUTE_ORDER`, which 72 tests pin, and it changes the
+    `version` obligation's shape. Doing a five-route refactor of this seam inline, late in a long
+    session, on the module that has already produced two defective attempts, is how the third one
+    happens. It wants its own tests-first pass and is a good class-A/B delegation.
+  - **QSPICE records nothing usable.** Its Uninstall entry exists (`QSPICE® from Qorvo, Inc`) with
+    **empty** `DisplayVersion` and `InstallLocation`, so no registry cleverness finds `B:\QSPICE`. The
+    configured-path mechanism is not made redundant by the route above; it is required for at least
+    one of the three tools.
+  - **FEMM has no registry entry at all**, and did not need one.
+- **Inherited — still open for 13.1 and 13.2:**
+  - **No version string has been captured for any tool.** All three are `manual_only` with no version
+    probe, so the run records need the operator's About-box strings. LTspice's is already known from
+    the registry (`26.0.2.1`); FEMM's and QSPICE's are not.
+  - **No solver has been run.** `artifacts/05_Solver_Runs/` is empty and every number in the project
+    is still `claimed` or `analytical-placeholder`.
+  - **The result-file format has still never been written by a human at a bench.**

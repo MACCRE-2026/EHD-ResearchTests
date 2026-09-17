@@ -39,10 +39,19 @@ from .provenance import (
     write_run_record,
 )
 from .solvers import FemmAdapter, LtspiceAdapter, QspiceAdapter
+from .toolconfig import (
+    TOOL_CONFIG_FILENAME,
+    ToolConfigError,
+    config_template,
+    configured_path_for,
+    load_tool_paths,
+    tool_config_path,
+)
 
 __all__ = (
     "ADAPTERS",
     "RESULT_FILE_MAGIC",
+    "TOOL_CONFIG_FILENAME",
     "Adapter",
     "AdapterError",
     "DoctorRow",
@@ -56,11 +65,16 @@ __all__ = (
     "RunOutcome",
     "RunRecord",
     "RunResult",
+    "ToolConfigError",
     "adapter_for",
+    "config_template",
+    "configured_path_for",
     "doctor_rows",
+    "load_tool_paths",
     "parse_result_file",
     "record_from_parsed",
     "sha256_of_file",
+    "tool_config_path",
     "write_run_record",
 )
 

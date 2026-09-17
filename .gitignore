@@ -74,7 +74,7 @@ artifacts/
 # design and the size.
 #
 # The MK0 profile the regression suite needs is therefore a TEST FIXTURE and lives
-# at tests/data/mk0_reference_profile.json, tracked. That separation is the point:
+# at tests/data/mk0_benchtop_22kv.json, tracked. That separation is the point:
 # "which design am I working on" and "what proves the physics has not drifted" are
 # different questions and must not share a switch.
 #
@@ -85,3 +85,23 @@ artifacts/
 # ---------------------------------------------------------------------------
 profiles/*
 !profiles/README.md
+
+# ---------------------------------------------------------------------------
+# Machine-local external-tool locations.
+#
+# tools.local.json tells the detection layer where solvers live when they are not
+# in a vendor default directory. It holds ABSOLUTE PATHS ON ONE MACHINE, so it is
+# configuration rather than repository content and would be wrong in every clone.
+#
+# It exists because installing the tools on 2026-09-16 exposed a real gap:
+# `configured-path` is the FIRST route in detect.ROUTE_ORDER and nothing in the
+# suite could populate it. LTspice at B:\LTspice and QSPICE at B:\QSPICE were both
+# working and both reported `tool-absent` -- correctly by the contract's own
+# definition, since all four routes concluded, and wrongly in the only sense that
+# matters. A working tool reported absent is exactly what the detection layer was
+# built to prevent.
+#
+# A test asserts this rule holds, because a leaked config would publish one
+# operator's directory layout.
+# ---------------------------------------------------------------------------
+tools.local.json

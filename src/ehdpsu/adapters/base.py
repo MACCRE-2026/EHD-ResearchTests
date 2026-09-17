@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..detect import ToolProbe, ToolSpec, detect_tool
+from .toolconfig import configured_path_for
 
 # Derived rather than typed, so the literal is neither a magic number nor an exemption.
 _SHA256_HEX_LENGTH = len(hashlib.sha256(b"").hexdigest())
@@ -166,7 +167,15 @@ class Adapter(abc.ABC):
     # -- obligation 1: detect ------------------------------------------------
 
     def detect(self, configured_path: Path | None = None) -> ToolProbe:
-        """Resolve through every route before concluding absence. Never overridden."""
+        """Resolve through every route before concluding absence. Never overridden.
+
+        When no path is passed, the machine-local tool configuration is consulted. That is what makes
+        route 1 reachable at all: before ``toolconfig`` existed, ``configured-path`` was recorded as
+        attempted on every single probe and could never resolve anything, because nothing in the suite
+        could supply it. Two working installs were reported ``tool-absent`` as a result.
+        """
+        if configured_path is None:
+            configured_path = configured_path_for(self.name)
         return detect_tool(self.tool_spec, configured_path=configured_path)
 
     # -- obligation 2: version -----------------------------------------------

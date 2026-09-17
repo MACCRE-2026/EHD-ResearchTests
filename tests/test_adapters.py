@@ -30,6 +30,7 @@ import pytest
 from ehdpsu import adapters
 from ehdpsu.adapters import base as adapter_base
 from ehdpsu.adapters import provenance as prov
+from ehdpsu.adapters import toolconfig
 from ehdpsu.basis import Basis
 from ehdpsu.detect import KNOWN_TOOLS, ToolStatus
 
@@ -609,3 +610,192 @@ class TestDoctorReportsTheMatrix:
         monkeypatch.setattr(adapter_base.Adapter, "detect", explode)
         rows = adapters.doctor_rows()
         assert adapters.unresolved_capabilities(rows)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Added 2026-09-16, after installing the tools exposed the gap.
+#
+# `configured-path` is the FIRST route in detect.ROUTE_ORDER and nothing in the suite could populate
+# it. detect_tool accepted the argument, the adapters called detect() with no argument, and the CLI
+# offered no way to pass one. The route was recorded as attempted on every probe and could never
+# resolve anything.
+#
+# Found by installing: LTspice at B:\LTspice and QSPICE at B:\QSPICE, both working, both reported
+# `tool-absent`. Correctly, by the contract's own definition -- all four routes were attempted, the
+# registry PATH scopes were read successfully (34 entries, neither tool among them), and none
+# resolved. The status logic was right and the outcome was a working tool reported absent, which is
+# the one thing this layer exists to prevent.
+#
+# Every test below uses an isolated root. None may depend on what is installed on the machine
+# running it, or on whether an operator has written a config at all.
+# ---------------------------------------------------------------------------
+
+
+class TestToolConfigLocation:
+    def test_the_config_lives_at_the_repository_root_under_a_local_name(self) -> None:
+        """``.local.`` in the name, so it reads as machine-specific before anyone opens it."""
+        assert toolconfig.TOOL_CONFIG_FILENAME == "tools.local.json"
+        assert toolconfig.tool_config_path() == REPO_ROOT / "tools.local.json"
+
+    def test_an_explicit_root_is_respected(self, tmp_path: Path) -> None:
+        assert toolconfig.tool_config_path(tmp_path) == tmp_path / "tools.local.json"
+
+    def test_the_template_is_valid_input_to_the_loader(self, tmp_path: Path) -> None:
+        """A template an operator cannot paste in is worse than no template.
+
+        It is also the only documentation of the format that the CLI prints, so a template the loader
+        rejects would be the CLI handing out a broken example.
+        """
+        (tmp_path / toolconfig.TOOL_CONFIG_FILENAME).write_text(
+            toolconfig.config_template(), encoding="utf-8"
+        )
+        loaded = toolconfig.load_tool_paths(tmp_path)
+        assert loaded, "the template configures nothing, so it demonstrates nothing"
+        assert all(p.is_absolute() for p in loaded.values())
+
+    def test_the_template_shows_one_tool_not_every_tool(self, tmp_path: Path) -> None:
+        """A template listing all seven invites filling every line in.
+
+        And a wrong path is worse than an absent one: it produces a configured route that fails,
+        where no entry at all produces a clean fall-through to the vendor default.
+        """
+        (tmp_path / toolconfig.TOOL_CONFIG_FILENAME).write_text(
+            toolconfig.config_template(), encoding="utf-8"
+        )
+        assert len(toolconfig.load_tool_paths(tmp_path)) == 1
+
+
+class TestToolConfigLoading:
+    def _write(self, root: Path, text: str) -> None:
+        (root / toolconfig.TOOL_CONFIG_FILENAME).write_text(text, encoding="utf-8")
+
+    def test_no_config_file_is_the_normal_case_and_not_an_error(self, tmp_path: Path) -> None:
+        """Most machines have the tools where the vendor put them.
+
+        Requiring a config file to detect a default install would be a worse default than none — and
+        FEMM on this machine proves the point: it resolved through ``default-paths`` unconfigured.
+        """
+        assert toolconfig.load_tool_paths(tmp_path) == {}
+
+    def test_a_valid_config_returns_absolute_paths(self, tmp_path: Path) -> None:
+        self._write(tmp_path, '{"tools": {"ltspice": "B:\\\\LTspice\\\\LTspice.exe"}}')
+        loaded = toolconfig.load_tool_paths(tmp_path)
+        assert loaded == {"ltspice": Path(r"B:\LTspice\LTspice.exe")}
+
+    def test_an_explicitly_empty_config_is_accepted(self, tmp_path: Path) -> None:
+        """``{"tools": {}}`` says "configured nothing" out loud, which is a legitimate state."""
+        self._write(tmp_path, '{"tools": {}}')
+        assert toolconfig.load_tool_paths(tmp_path) == {}
+
+    def test_malformed_json_raises_rather_than_being_skipped(self, tmp_path: Path) -> None:
+        """Ignoring it would make a typo indistinguishable from no configuration.
+
+        The operator would see ``tool-absent`` for a tool they had just told the suite where to find,
+        with nothing anywhere saying the file was unreadable.
+        """
+        self._write(tmp_path, "{not json")
+        with pytest.raises(toolconfig.ToolConfigError, match="not valid JSON"):
+            toolconfig.load_tool_paths(tmp_path)
+
+    def test_a_non_object_document_is_refused(self, tmp_path: Path) -> None:
+        self._write(tmp_path, "[]")
+        with pytest.raises(toolconfig.ToolConfigError, match="JSON object"):
+            toolconfig.load_tool_paths(tmp_path)
+
+    def test_a_missing_tools_key_is_refused(self, tmp_path: Path) -> None:
+        self._write(tmp_path, '{"_comment": "nothing here"}')
+        with pytest.raises(toolconfig.ToolConfigError, match="no 'tools' object"):
+            toolconfig.load_tool_paths(tmp_path)
+
+    def test_a_non_object_tools_value_is_refused(self, tmp_path: Path) -> None:
+        self._write(tmp_path, '{"tools": ["B:\\\\LTspice"]}')
+        with pytest.raises(toolconfig.ToolConfigError, match="must be an object"):
+            toolconfig.load_tool_paths(tmp_path)
+
+    def test_an_unknown_tool_name_is_refused(self, tmp_path: Path) -> None:
+        """A mistyped name would otherwise be silently unconfigured.
+
+        And silently unconfigured looks exactly like a tool that is not installed, which is the
+        confusion this whole file exists to remove.
+        """
+        self._write(tmp_path, '{"tools": {"ltspce": "B:\\\\LTspice\\\\LTspice.exe"}}')
+        with pytest.raises(toolconfig.ToolConfigError, match="unknown tool"):
+            toolconfig.load_tool_paths(tmp_path)
+
+    def test_every_known_tool_name_is_accepted(self, tmp_path: Path) -> None:
+        """The register of valid names is ``detect.KNOWN_TOOLS``, not a second list here."""
+        entries = ", ".join(f'"{spec.name}": "C:\\\\x\\\\y.exe"' for spec in KNOWN_TOOLS)
+        self._write(tmp_path, f'{{"tools": {{{entries}}}}}')
+        assert set(toolconfig.load_tool_paths(tmp_path)) == {s.name for s in KNOWN_TOOLS}
+
+    @pytest.mark.parametrize("value", ['""', '"   "', "null", "42", "[]"])
+    def test_a_non_string_or_empty_path_is_refused(self, tmp_path: Path, value: str) -> None:
+        self._write(tmp_path, f'{{"tools": {{"ltspice": {value}}}}}')
+        with pytest.raises(toolconfig.ToolConfigError, match="non-empty path string"):
+            toolconfig.load_tool_paths(tmp_path)
+
+    def test_a_relative_path_is_refused(self, tmp_path: Path) -> None:
+        """The same config would find the tool from one working directory and not another."""
+        self._write(tmp_path, '{"tools": {"ltspice": "LTspice\\\\LTspice.exe"}}')
+        with pytest.raises(toolconfig.ToolConfigError, match="not absolute"):
+            toolconfig.load_tool_paths(tmp_path)
+
+    def test_the_loader_does_not_check_that_the_path_exists(self, tmp_path: Path) -> None:
+        """Existence is ``detect_tool``'s business, and it reports a failure rather than hiding it.
+
+        Validating here would collapse two different states — "you configured nothing" and "you
+        configured something that has moved" — into one, and the second has to stay visible.
+        """
+        self._write(tmp_path, '{"tools": {"ltspice": "Z:\\\\nowhere\\\\LTspice.exe"}}')
+        assert toolconfig.load_tool_paths(tmp_path)["ltspice"] == Path(r"Z:\nowhere\LTspice.exe")
+
+    def test_configured_path_for_returns_none_when_unconfigured(self, tmp_path: Path) -> None:
+        self._write(tmp_path, '{"tools": {"ltspice": "B:\\\\LTspice\\\\LTspice.exe"}}')
+        assert toolconfig.configured_path_for("qspice", tmp_path) is None
+        assert toolconfig.configured_path_for("ltspice", tmp_path) is not None
+
+
+class TestAdaptersConsultTheConfig:
+    def test_detect_uses_the_configured_path_when_none_is_passed(
+        self, adapter: adapters.Adapter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The wiring that makes route 1 reachable.
+
+        Monkeypatched rather than reading the real file, so this passes on a machine with no config
+        and on one where the operator has configured every tool.
+        """
+        exe = tmp_path / adapter.tool_spec.executables[0]
+        exe.write_text("stand-in\n", encoding="utf-8")
+        monkeypatch.setattr(
+            adapter_base, "configured_path_for", lambda name, root=None: exe if name else None
+        )
+        probe = adapter.detect()
+        assert probe.status is ToolStatus.PRESENT
+        assert probe.path == exe
+        assert probe.routes_tried == ("configured-path",)
+
+    def test_an_explicit_argument_beats_the_config(
+        self, adapter: adapters.Adapter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A caller who names a path meant that path.
+
+        Otherwise a stale config entry would quietly override a deliberate one-off override, which is
+        the wrong precedence: the more specific instruction is the one given at the call site.
+        """
+        from_config = tmp_path / "config" / adapter.tool_spec.executables[0]
+        explicit = tmp_path / "explicit" / adapter.tool_spec.executables[0]
+        for path in (from_config, explicit):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("stand-in\n", encoding="utf-8")
+        monkeypatch.setattr(
+            adapter_base, "configured_path_for", lambda name, root=None: from_config
+        )
+        assert adapter.detect(explicit).path == explicit
+
+    def test_no_config_leaves_detection_exactly_as_it_was(
+        self, adapter: adapters.Adapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(adapter_base, "configured_path_for", lambda name, root=None: None)
+        probe = adapter.detect()
+        assert probe.routes_tried[0] == "configured-path"
+        assert len(probe.routes_tried) > 1 or probe.status is ToolStatus.PRESENT

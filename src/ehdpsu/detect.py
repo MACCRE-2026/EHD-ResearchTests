@@ -459,6 +459,16 @@ def _note_for_resolved(spec: ToolSpec, version: str | None) -> str | None:
     return "located, but the version probe failed or printed nothing; version withheld rather than guessed"
 
 
+def _join_notes(parts: Iterable[str | None]) -> str | None:
+    """Combine note fragments, or ``None`` when there is nothing to say.
+
+    An empty string would be a note that renders as blank while being technically present, which is
+    the difference between "nothing to report" and "reported nothing".
+    """
+    kept = [p.strip() for p in parts if p and p.strip()]
+    return "; ".join(kept) if kept else None
+
+
 def detect_tool(spec: ToolSpec, configured_path: Path | None = None) -> ToolProbe:
     """Locate one tool, trying each route in ``ROUTE_ORDER`` until one resolves.
 
@@ -471,11 +481,23 @@ def detect_tool(spec: ToolSpec, configured_path: Path | None = None) -> ToolProb
     """
     routes_tried: list[str] = []
     inconclusive: list[str] = []
+    warnings: list[str] = []
     resolved: Path | None = None
 
     routes_tried.append("configured-path")
     if configured_path is not None:
         resolved = _resolve_configured(configured_path, spec.executables)
+        if resolved is None:
+            # Reported whatever happens next, including when a later route succeeds. A configured
+            # path that was supplied and did not resolve is a STALE CONFIG -- an install that moved,
+            # or a typo -- and if it were silent it would look identical to no configuration at all.
+            # The operator would then see the tool found "normally" and never learn that the entry
+            # they wrote is now wrong. *Principle 3, never report success over unperformed work*,
+            # applied to a route that was attempted and failed rather than skipped.
+            warnings.append(
+                f"the configured path {configured_path} did not resolve any of "
+                f"{list(spec.executables)}; falling through to the remaining routes"
+            )
 
     if resolved is None:
         routes_tried.append("process-path")
@@ -506,7 +528,7 @@ def detect_tool(spec: ToolSpec, configured_path: Path | None = None) -> ToolProb
             path=resolved,
             version=version,
             routes_tried=tuple(routes_tried),
-            note=_note_for_resolved(spec, version),
+            note=_join_notes([*warnings, _note_for_resolved(spec, version)]),
         )
 
     if not spec.windows_native:
@@ -523,7 +545,7 @@ def detect_tool(spec: ToolSpec, configured_path: Path | None = None) -> ToolProb
             path=None,
             version=None,
             routes_tried=tuple(routes_tried),
-            note="; ".join(inconclusive),
+            note=_join_notes([*warnings, *inconclusive]),
         )
 
     return ToolProbe(
@@ -532,7 +554,7 @@ def detect_tool(spec: ToolSpec, configured_path: Path | None = None) -> ToolProb
         path=None,
         version=None,
         routes_tried=tuple(routes_tried),
-        note=None,
+        note=_join_notes(warnings),
     )
 
 

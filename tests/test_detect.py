@@ -1042,3 +1042,91 @@ class TestNoDeadCode:
             f"ToolProbe is constructed in {len(constructions)} places. Each carries its own note "
             f"logic, and they will disagree."
         )
+
+
+class TestAStaleConfiguredPathIsNeverSilent:
+    """A configured path that was supplied and did not resolve must be reported.
+
+    Added 2026-09-16, when installing the tools made route 1 populatable for the first time and
+    immediately raised the question of what happens when the entry goes stale. An install moves, or a
+    path is mistyped, and the tool is then found by a later route anyway — at which point the probe
+    reports ``present`` and the operator never learns that the entry they wrote is now wrong. Two
+    states collapse into one: "you configured nothing" and "you configured something that has moved".
+
+    *Principle 3, never report success over unperformed work*, applied to a route that was **attempted
+    and failed** rather than skipped. The success is real; the silence about the failed attempt is not
+    acceptable.
+    """
+
+    def test_a_failed_configured_path_is_noted_even_when_a_later_route_succeeds(
+        self, tmp_path: Path
+    ) -> None:
+        """The case that matters, because it is the one that otherwise looks fine."""
+        real = tmp_path / "real"
+        real.mkdir()
+        exe = real / "movedtool.exe"
+        exe.write_text("here now\n", encoding="utf-8")
+        spec = detect.ToolSpec(
+            name="movedtool",
+            executables=("movedtool.exe",),
+            default_paths=(real,),
+            version_args=(),
+            manual_only=False,
+        )
+        probe = detect.detect_tool(spec, configured_path=tmp_path / "where-it-used-to-be")
+
+        assert probe.status is detect.ToolStatus.PRESENT
+        assert probe.path == exe
+        assert probe.routes_tried == EXPECTED_ROUTE_ORDER
+        assert probe.note is not None
+        assert "configured path" in probe.note, (
+            f"note is {probe.note!r}. The tool was found by a later route, so the stale configured "
+            f"entry would be invisible — and an operator debugging a config they wrote needs to "
+            f"know it is no longer doing anything."
+        )
+        assert "where-it-used-to-be" in probe.note, "the note does not name the path that failed"
+
+    def test_a_failed_configured_path_is_noted_when_nothing_resolves(self) -> None:
+        probe = detect.detect_tool(
+            _unresolvable_spec(), configured_path=Path(r"Z:\nowhere\at\all.exe")
+        )
+        assert probe.status in (
+            detect.ToolStatus.TOOL_ABSENT,
+            detect.ToolStatus.TOOL_UNRESOLVED,
+        )
+        assert probe.note is not None and "configured path" in probe.note
+
+    def test_supplying_no_configured_path_produces_no_such_note(self) -> None:
+        """The note appears only when a route was actually attempted and failed."""
+        probe = detect.detect_tool(_unresolvable_spec(), configured_path=None)
+        assert probe.note is None or "configured path" not in probe.note
+
+    def test_a_resolving_configured_path_produces_no_such_note(self, tmp_path: Path) -> None:
+        exe, spec = _fake_tool(tmp_path)
+        probe = detect.detect_tool(spec, configured_path=exe)
+        assert probe.status is detect.ToolStatus.PRESENT
+        assert probe.note is None or "configured path" not in probe.note
+
+    def test_the_stale_note_does_not_displace_the_version_reason(self, tmp_path: Path) -> None:
+        """Both facts survive. A note is a list of things worth saying, not the first one."""
+        real = tmp_path / "real"
+        real.mkdir()
+        (real / "twonotes.exe").write_text("x\n", encoding="utf-8")
+        spec = detect.ToolSpec(
+            name="twonotes",
+            executables=("twonotes.exe",),
+            default_paths=(real,),
+            version_args=(),
+            manual_only=False,
+        )
+        probe = detect.detect_tool(spec, configured_path=tmp_path / "gone")
+        assert probe.note is not None
+        assert "configured path" in probe.note
+        assert (
+            "version" in probe.note
+        ), "the stale-config note replaced the no-version-probe reason instead of joining it"
+
+    def test_an_empty_note_is_none_rather_than_a_blank_string(self) -> None:
+        """ "Nothing to report" and "reported nothing" are different, and only one renders."""
+        probe = detect.detect_tool(_unresolvable_spec())
+        assert probe.note is None or probe.note.strip()
