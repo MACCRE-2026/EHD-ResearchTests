@@ -6,13 +6,15 @@ fails when a registered tool is missing from ``ATTRIBUTIONS.md``. A registry nob
 list that drifts from the adapters it names.
 
 **Registered, and reporting absent, is the correct state today.** No FEMM, LTspice, QSPICE, Gmsh,
-Elmer, OpenFOAM or ParaView run has occurred in this project, and none of the three tools below has
-been detected on this machine. ``doctor`` says so per tool rather than degrading quietly, because a
+Elmer, OpenFOAM or ParaView run has occurred in this project. FEMM, LTspice and QSPICE are
+installed on this machine (FEMM's Lua script has been run once, `artifacts/05_Solver_Runs/`); Gmsh,
+Elmer and ParaView are not. ``doctor`` says so per tool rather than degrading quietly, because a
 capability whose tool is absent reports as absent, not as degraded-but-fine.
 
-The four tools with no adapter yet — Gmsh, Elmer, OpenFOAM, ParaView — are detectable
-(``detect.KNOWN_TOOLS``) and unregistered here, which is honest: detection is implemented for them
-and the other four obligations are not. Plan Tasks 14 and 15 add them.
+**One tool has no adapter yet — OpenFOAM.** It is detectable (``detect.KNOWN_TOOLS``) and
+unregistered here, which is honest: detection is implemented for it and the other four obligations
+are not. Its route is Docker, decided 2026-09-16 and unverified because Docker is not installed;
+plan step 14.3.0 is where it gets one.
 """
 
 from __future__ import annotations
@@ -38,7 +40,14 @@ from .provenance import (
     sha256_of_file,
     write_run_record,
 )
-from .solvers import FemmAdapter, LtspiceAdapter, QspiceAdapter
+from .solvers import (
+    ElmerAdapter,
+    FemmAdapter,
+    GmshAdapter,
+    LtspiceAdapter,
+    ParaviewAdapter,
+    QspiceAdapter,
+)
 from .toolconfig import (
     TOOL_CONFIG_FILENAME,
     ToolConfigError,
@@ -55,9 +64,12 @@ __all__ = (
     "Adapter",
     "AdapterError",
     "DoctorRow",
+    "ElmerAdapter",
     "FemmAdapter",
     "GenerateError",
+    "GmshAdapter",
     "LtspiceAdapter",
+    "ParaviewAdapter",
     "ParseError",
     "ParsedResult",
     "ProvenanceError",
@@ -82,6 +94,9 @@ ADAPTERS: tuple[Adapter, ...] = (
     FemmAdapter(),
     LtspiceAdapter(),
     QspiceAdapter(),
+    GmshAdapter(),
+    ElmerAdapter(),
+    ParaviewAdapter(),
 )
 
 

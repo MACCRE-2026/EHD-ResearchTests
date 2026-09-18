@@ -67,19 +67,35 @@ The following packages are installed and actively used by the suite:
 - **black** — code formatting.
 - **mypy** — static type checking.
 
-### Planned adapters, not yet installed or run
+### Adapters, and what "adapter" does and does not claim
 
-The following tools are required for the planned adapter layer, but the suite does not yet call
-them or depend on their presence:
+**An adapter existing is not the same as the tool having been run.** *Principle 3, never report
+success over unperformed work* — recording a tool as "in use" because the suite can generate its
+input and would know how to invoke it, when nobody has actually invoked it, is exactly the
+laundering this document exists to prevent.
 
-- **FEMM** — electrostatics solver (not yet installed or run).
-- **LTspice** — circuit simulation (not yet installed or run).
-- **QSPICE** — circuit simulation (not yet installed or run).
-- **Gmsh** — mesh generator (not yet installed or run).
-- **Elmer** — CFD solver (not yet installed or run).
-- **OpenFOAM** — CFD solver (not yet installed or run).
-- **ParaView** — field visualisation (not yet installed or run).
-- **CadQuery / OpenCASCADE** — CAD export (not yet installed or run).
+- **FEMM** — electrostatics solver. **Installed** (`C:\femm42\bin\femm.exe`) and **has been run
+  once**, 2026-09-16 (`artifacts/05_Solver_Runs/femm_wire_collector_2026-09-16.txt`). An adapter
+  exists (`src/ehdpsu/adapters/solvers.py::FemmAdapter`).
+- **LTspice** — circuit simulation. **Installed** (`B:\LTspice\LTspice.exe`) but **has not been
+  run** in this project. An adapter exists (`LtspiceAdapter`).
+- **QSPICE** — circuit simulation. **Installed** (`B:\QSPICE\QSPICE64.exe`) but **has not been
+  run** in this project. An adapter exists (`QspiceAdapter`).
+- **Gmsh** — mesh generator. **Not installed** on this machine and **has never been run** here. An
+  adapter exists (`GmshAdapter`) — it generates a deterministic `.geo` from the profile and
+  detects the tool, but reports the mesh statistics as unobtainable rather than solved.
+- **Elmer** — CFD solver. **Not installed** and **has never been run**. An adapter exists
+  (`ElmerAdapter`) — it generates a `.sif` Solver Input File but the field values are not run;
+  reported as `analytical-placeholder` at best, never `solved`.
+- **ParaView** — field visualisation. **Not installed** and **has never been run**. An adapter
+  exists (`ParaviewAdapter`) — it generates a scripted `pvpython` render, but no render has been
+  produced.
+- **OpenFOAM** — CFD solver. **Not installed**, **has never been run**, and **has no adapter**.
+  Its route is Docker, decided 2026-09-16 and not verified because Docker is not installed; this is
+  the one tool the project's detection table knows about that deliberately has no registered
+  adapter yet (plan step 14.3.0).
+- **CadQuery / OpenCASCADE** — CAD export. **Not installed**, **has never been run**, and has no
+  adapter (plan Task 17, not started).
 
 ---
 

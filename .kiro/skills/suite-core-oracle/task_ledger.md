@@ -1469,3 +1469,108 @@ Closes the outstanding half of 13.0. Recorded here because these strings are wha
     `analytical-placeholder`, and nothing may be called validated.
   - **LTspice auto-updates by default.** If it updates between now and the run, the registry version
     changes and the skeleton's line goes stale. Re-read the key rather than trusting the skeleton.
+
+### 2026-09-17 — Batch 1: Gmsh, Elmer and ParaView adapters, plus attribution (Task 14.1, 14.2, 15.1, 19.3)
+
+- **Status:** COMPLETED
+- **Files:** `src/ehdpsu/adapters/solvers.py` (three new classes: `GmshAdapter`, `ElmerAdapter`,
+  `ParaviewAdapter`, plus a shared `_no_verified_headless_run` helper), `src/ehdpsu/adapters/__init__.py`
+  (registration and docstring), `ATTRIBUTIONS.md` (per-tool adapter/installed/run status),
+  `.kiro/governance/gate.ps1` (`$COLLECTED_FLOOR` 854 → 998, history comment appended).
+  `tests/test_adapters.py` was **not** modified — it was the pre-written specification for this batch.
+- **Signatures:**
+  - `GmshAdapter`: `expected_values = ("n_nodes", "n_elements", "min_element_quality")`,
+    `generate()` writes `ehd_cell.geo` built from `physics.default_design()` (gap, wire radius
+    appear in the text), `run()` returns `TOOL_UNAVAILABLE` always — either genuinely absent, or
+    present-but-unverified (see decision below).
+  - `ElmerAdapter`: `expected_values = ("v_ion_wind_m_per_s", "p_static_Pa")`, `generate()` writes
+    `ehd_cell.sif` with `Procedure = File "FlowSolve" "FlowSolver"` and no body force term,
+    `capability` mentions "mesh" per the test's requirement, `version_args` reached via
+    `detect.TOOLS_WITHOUT_A_VERSION_PROBE["elmer"]` — untouched.
+  - `ParaviewAdapter`: `expected_values = ("image_width_px", "image_height_px",
+    "field_range_min", "field_range_max")`, `generate()` writes `ehd_cell_render.py` scripted
+    against `pvpython`, `run()` reports `MANUAL_REQUIRED` (this project treats ParaView as
+    GUI-driven for real visualisation work even though `pvpython` is scriptable).
+- **Decision:**
+  - **Gmsh's and Elmer's `run()` never returns `MANUAL_REQUIRED`.** Both are headless
+    (`manual_only=False` in `detect.KNOWN_TOOLS`), so reporting "a human must drive this" would be
+    false. But no headless invocation of either has been *verified* on this machine (neither is
+    even installed), so `COMPLETED` would be *principle 3, never report success over unperformed
+    work*. The only remaining `RunOutcome` that is not a false statement is `TOOL_UNAVAILABLE` —
+    used both for genuine absence and for "present but its headless invocation is unverified,"
+    via the shared `_no_verified_headless_run` helper. This is a real ambiguity the current
+    `RunOutcome` enum cannot express (there is no "present, headless, but never run" state
+    distinct from "absent"); flagged here rather than silently resolved, and rather than inventing
+    a new enum member the test file does not ask for and the packet forbids adding.
+  - **Gmsh's `.geo` describes only the fluid domain** (a flow box with the wire's circular
+    interior removed as a hole), not FEMM's three-region electrostatics geometry. FEMM needs the
+    wire interior and the below-collector region labelled because *every closed region needs a
+    material*, but neither region carries fluid, so a fluid mesh has no reason to include them.
+    This is a deliberate divergence from "reuse the same geometry everywhere," justified by the
+    two geometries answering different physical questions; recorded here so it reads as a decision
+    rather than an oversight.
+  - **Elmer's `.sif` omits the EHD body force term (ρ_ion·E) that would actually drive the ion
+    wind.** *Physics honesty, principle 1: never curve-fit or invent a coefficient.* No cited
+    source for a plug-in body-force term at this design point was found in the time available, and
+    inventing one would be exactly the fabrication `adapter-contract.md` and the handover's
+    section 4 warn against (the "invented Elmer solver procedure" defect from a prior attempt).
+    With no body force and no-slip walls everywhere, this `.sif` solves to the trivial
+    zero-velocity field — it exists to let the mesh, material and boundary wiring be checked
+    against a real Elmer install, not to produce a flow result. **This is the batch's
+    under-specified case**, named rather than guessed past: driving the actual ion wind needs a
+    decided volumetric or surface force model, which is domain physics work belonging to the
+    fluid-cfd-oracle, not this packet.
+  - **`Procedure = File "FlowSolve" "FlowSolver"` is cited, not invented**, from a published Elmer
+    `.sif` example on the Elmer developer's own forum reply
+    (https://forum.freecad.org/viewtopic.php?style=8&t=48175, P. Råback, Elmer core developer).
+    Air properties (ρ=1.2 kg/m³, μ=1.8e-5 Pa·s) are cited from F. M. White, *Viscous Fluid Flow*,
+    3rd ed., Table 1.4 — the physics-honesty citation requirement.
+  - **ParaView's render script is untestable end-to-end** without an actual `.vtu` from a real
+    Elmer run, which does not exist. `generate()` produces a syntactically complete, importable
+    script (asserted by the test suite via `.py` extension and a ParaView-bindings import check);
+    running it against a nonexistent VTU file would fail loudly on `OpenDataFile`, which is the
+    intended behaviour rather than a defect to route around.
+  - **`ATTRIBUTIONS.md`'s planned-tools section was restructured**, from a flat "not yet installed
+    or run" list to per-tool lines distinguishing installed-vs-not and run-vs-not, because FEMM,
+    LTspice and QSPICE are now installed (per the handover) while Gmsh, Elmer and ParaView are not,
+    and none of the six has been run except FEMM once. The old flat wording would have been false
+    for three of the six tools.
+  - **`$COLLECTED_FLOOR` was measured, not guessed**: `pytest --collect-only -q` reported 998
+    tests collected after registration, up from 854. Set to exactly that.
+- **Evidence** (observed, this session, `.venv` Python 3.12.8):
+  - `tests/test_adapters.py`: **314 collected / 314 passed / 0 failed / 0 skipped** (up from
+    19 failed, 175 passed against the pre-existing 194 before this batch — the file's total grew
+    because most of its tests are parameterised over `adapters.ADAPTERS`, now six adapters instead
+    of three).
+  - Full suite before this batch (measured from the handover's own instructions, `pytest -q`
+    against `tests/test_adapters.py` only): 19 failed, 175 passed.
+  - Full suite after: **998 collected / 998 passed**, via `pytest --collect-only -q` then the
+    Gate's own `pytest -q` stage.
+  - Gate: **status OK, exit 0.** `ruff and black swept 45/45 files; mypy and pyright both examined
+    45 (agreeing, expected >= 45); no undeclared exclusions; pytest 998 collected / 998 passed at
+    floor 998; 2 governance verifier(s) passed.` Run as a background process, output captured to a
+    file and read with the file-reading tool, terminal stopped afterward. One `black` finding was
+    found and fixed (`black src/ehdpsu/adapters/solvers.py`, reformatted, re-verified 314/314 still
+    passing) before the Gate went green.
+- **Inherited:**
+  - **Elmer's `.sif` has no EHD driving force and therefore no physically meaningful flow result
+    even once Elmer is installed.** The next session that wants a real ion-wind number from Elmer
+    needs a decided body-force model first — this is domain physics (fluid-cfd-oracle), not
+    adapter plumbing, and it was out of scope for this packet.
+  - **`RunOutcome` has no state for "headless tool present but never verified to run here,"**
+    distinct from "absent." `_no_verified_headless_run` currently returns `TOOL_UNAVAILABLE` for
+    both cases, which is honest (neither has produced a result) but conflates two different facts
+    about the world. Left as `TOOL_UNAVAILABLE` rather than adding a new enum member, since the
+    packet prohibited new modules/interfaces beyond what the test file specifies and no test asked
+    for a sixth outcome.
+  - **The Gmsh `.geo`'s flow-domain box dimensions (`outer_hw`, `outer_top`) are this adapter's own
+    engineering choices**, not profile values — analogous to FEMM's `outer_r_mm` sizing heuristic
+    in `femm.py`. They are not registered as design-value exemptions because they are geometry
+    margins around a profile value (`d_gap_m`), not literals equal to a profile value themselves;
+    the drift test's layer 2 passed without needing a new exemption, which is some evidence this
+    reasoning holds, but it was not independently re-derived from the exemption doctrine here.
+  - **No Gmsh, Elmer or ParaView run has occurred.** Detection on this machine reports all three
+    absent. This entry's evidence is entirely about the code satisfying its specification, not
+    about any solver having produced a number — consistent with `adapter-contract.md`'s "as of
+    now, no FEMM, SPICE, Elmer or ParaView run has occurred in this project," now also true of
+    Gmsh.

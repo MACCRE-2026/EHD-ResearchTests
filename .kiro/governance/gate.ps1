@@ -170,6 +170,11 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 #                              emptied all seven default_paths tuples and every test passed:
 #                              reference data is checked for VALIDITY and never for PRESENCE, so
 #                              deletion satisfies every schema check ever written
+#   Batch 1 adapters   998   <- Gmsh, Elmer and ParaView adapters registered
+#                              (src/ehdpsu/adapters/solvers.py). Most of the contract tests are
+#                              parameterised over adapters.ADAPTERS, so three new adapters
+#                              multiply them without a new test being written; measured with
+#                              `pytest --collect-only -q`, not guessed
 #
 # Correction, 2026-09-16. The line now reading 600 previously read
 # "Task (this packet) 600   <- adapter detection: 21 new tests". Both halves were wrong, and both
@@ -185,7 +190,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 854
+$COLLECTED_FLOOR = 998
 
 $result = [ordered]@{
     status          = $null

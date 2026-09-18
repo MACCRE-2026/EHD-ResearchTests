@@ -33,6 +33,7 @@ from ehdpsu.adapters import provenance as prov
 from ehdpsu.adapters import toolconfig
 from ehdpsu.basis import Basis
 from ehdpsu.detect import KNOWN_TOOLS, ToolStatus
+from ehdpsu.physics import default_design
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ATTRIBUTIONS = REPO_ROOT / "ATTRIBUTIONS.md"
@@ -43,6 +44,25 @@ FIVE_OBLIGATIONS = ("detect", "version", "generate", "run", "parse")
 
 A_VALID_DIGEST = "0" * 64
 ANOTHER_VALID_DIGEST = "a" * 64
+
+# Result-value names that are genuinely dimensionless, with the reason. Declared rather than inferred,
+# for the same cause as every other register here: an escape hatch with no register stops being an
+# escape hatch and becomes the normal case. `n_*` counts and `*_px` pixel dimensions are handled by
+# convention in the test above and do not need entries.
+DIMENSIONLESS_VALUE_NAMES: dict[str, str] = {
+    "min_element_quality": (
+        "a mesh quality metric on a 0-1 scale, dimensionless by definition; attaching an SI suffix "
+        "would invent a unit it does not have"
+    ),
+    "field_range_min": (
+        "the low end of the rendered scalar range, whose unit depends on which field was rendered "
+        "and is therefore carried by the render script rather than the identifier"
+    ),
+    "field_range_max": (
+        "the high end of the rendered scalar range, dimensionally ambiguous for the same reason as "
+        "field_range_min"
+    ),
+}
 
 
 def _adapter_ids() -> list[str]:
@@ -85,15 +105,27 @@ class TestTheRegistryItself:
         assert adapters.adapter_for(adapter.name) is adapter
 
     def test_tools_detectable_but_unadapted_are_not_silently_claimed(self) -> None:
-        """Four tools have detection and no adapter, and that gap is deliberate.
+        """Exactly one tool has detection and no adapter, and that gap is deliberate.
 
-        Detection is implemented for gmsh, elmer, openfoam and paraview; the other four obligations
-        are not. Registering them would advertise a capability that does not exist — plan Tasks 14
-        and 15 add it. Pinned so the day an adapter appears, this test changes on purpose.
+        Registering a tool advertises a capability, so the set of detectable-but-unadapted tools is
+        pinned rather than allowed to drift in either direction.
+
+        **Updated 2026-09-16 for the first delegated batch**, from
+        ``{"gmsh", "elmer", "openfoam", "paraview"}`` down to ``{"openfoam"}``. This is a
+        tests-first specification, not a record of work done: the batch's job is to make it true by
+        registering Gmsh, Elmer and ParaView adapters.
+
+        ``openfoam`` stays unadapted on purpose. Its route is Docker, decided 2026-09-16, and nothing
+        about that route has been verified because Docker is not installed — the same discipline that
+        found three fabricated executable names. It gets an adapter after step 14.3.0, not before.
         """
         registered = {a.name for a in adapters.ADAPTERS}
         detectable = {spec.name for spec in KNOWN_TOOLS}
-        assert detectable - registered == {"gmsh", "elmer", "openfoam", "paraview"}
+        assert detectable - registered == {"openfoam"}, (
+            f"detectable-but-unadapted is {sorted(detectable - registered)}; expected exactly "
+            f"{{'openfoam'}}. Registering a tool claims a capability, and un-registering one "
+            f"withdraws it — neither should happen as a side effect."
+        )
 
 
 class TestTheFiveObligations:
@@ -131,15 +163,49 @@ class TestTheFiveObligations:
 
         A transcribed ``E_peak`` could be V/m or kV/mm and nothing would catch the difference; a
         transcribed ``E_peak_surface_V_per_m`` cannot be misread.
+
+        **Extended 2026-09-16** for tools whose read-back is genuinely dimensionless. A mesher reports
+        element counts and a renderer reports pixel dimensions; demanding an SI suffix on a count
+        would force a fake one, which is worse than none. Two escapes, both narrow and both declared:
+
+          * a leading ``n_`` marks a count — ``n_nodes``, ``n_elements``;
+          * a trailing ``_px`` marks a pixel dimension.
+
+        Anything else dimensionless needs an entry in ``DIMENSIONLESS_VALUE_NAMES`` with a reason,
+        mirroring every other declared register in this project. An escape hatch with no register is
+        how a unit-free name becomes normal.
         """
+        suffixes = ("_V", "_A", "_F", "_m", "_s", "_Pa", "_N", "_K", "_W", "_px")
         unitless = [
             name
             for name in adapter.expected_values
-            if not any(name.endswith(suffix) for suffix in ("_V", "_A", "_F", "_m", "_s"))
+            if not any(name.endswith(s) for s in suffixes)
             and "_per_" not in name
-            and not name.endswith("_pp_V")
+            and not name.startswith("n_")
+            and name not in DIMENSIONLESS_VALUE_NAMES
         ]
-        assert not unitless, f"{adapter.name} expects value names with no unit: {unitless}"
+        assert not unitless, (
+            f"{adapter.name} expects value names with no unit and no declared reason: {unitless}. "
+            f"Add the unit to the identifier, or register the name in DIMENSIONLESS_VALUE_NAMES "
+            f"with why it has none."
+        )
+
+    def test_the_dimensionless_register_is_not_a_loophole(self) -> None:
+        """Every declared dimensionless name is in use and carries a substantive reason.
+
+        A register that accumulates entries nobody removes becomes a list of everything, which is the
+        same as no rule at all.
+        """
+        in_use = {name for a in adapters.ADAPTERS for name in a.expected_values}
+        for name, reason in DIMENSIONLESS_VALUE_NAMES.items():
+            assert name in in_use, (
+                f"DIMENSIONLESS_VALUE_NAMES declares {name!r}, which no adapter expects. A stale "
+                f"exemption is an exemption nobody re-justified."
+            )
+            assert len(reason.split()) >= 6, (
+                f"DIMENSIONLESS_VALUE_NAMES[{name!r}] gives {reason!r}, too terse to have been "
+                f"thought about."
+            )
 
 
 class TestDetectAndVersion:
@@ -799,3 +865,196 @@ class TestAdaptersConsultTheConfig:
         probe = adapter.detect()
         assert probe.routes_tried[0] == "configured-path"
         assert len(probe.routes_tried) > 1 or probe.status is ToolStatus.PRESENT
+
+
+# ---------------------------------------------------------------------------
+# Specification for the first delegated batch, written 2026-09-16 BEFORE the code.
+#
+# Steps 14.1 (Gmsh), 14.2 (Elmer) and 15.1 (ParaView) each register a fourth, fifth and sixth adapter
+# against the existing ABC. The bulk of each one's contract is already covered: every test above is
+# parameterised over `adapters.ADAPTERS`, so registering an adapter subjects it to the five
+# obligations, deterministic generation, the parse refusals, immutability, attribution and the doctor
+# matrix without a line being written here.
+#
+# What follows is only the per-tool part the generic contract cannot know: what each one generates,
+# what its result file carries, and the one thing each tool gets wrong if nobody says otherwise.
+# ---------------------------------------------------------------------------
+
+
+class TestRunWithNoInputsNeverClaimsToHaveRun:
+    """``run(())`` cannot return ``COMPLETED``, whatever is installed.
+
+    Added with the batch because it is about to matter. Three adapters registered here wrap **headless**
+    tools, so unlike FEMM and the SPICE pair they *could* legitimately invoke something. That would make
+    ``test_no_adapter_claims_to_have_run_anything`` pass or fail depending on what the operator has
+    installed, and a test whose result depends on install state is not a test.
+
+    The rule is also simply correct: with an empty inputs tuple there is nothing to run, so reporting a
+    completed run would be *principle 3, never report success over unperformed work*, in its purest form
+    — success over literally no work.
+    """
+
+    def test_empty_inputs_never_completes(self, adapter: adapters.Adapter) -> None:
+        result = adapter.run(())
+        assert (
+            result.outcome is not adapters.RunOutcome.COMPLETED
+        ), f"{adapter.name} reported COMPLETED for an empty input set. There was nothing to run."
+        assert result.detail.strip()
+
+
+class TestGmshAdapter:
+    """14.1 — the mesher. Not a CFD route: every CFD route needs it."""
+
+    @property
+    def gmsh(self) -> adapters.Adapter:
+        return adapters.adapter_for("gmsh")
+
+    def test_it_is_registered(self) -> None:
+        assert self.gmsh.name == "gmsh"
+
+    def test_it_generates_a_geo_file(self, tmp_path: Path) -> None:
+        written = self.gmsh.generate(tmp_path)
+        names = [p.name for p in written]
+        assert any(n.endswith(".geo") for n in names), f"no .geo among {names}"
+
+    def test_the_geo_is_built_from_the_profile(self, tmp_path: Path) -> None:
+        """No typed geometry. The mesher describes the same cell the physics does.
+
+        *Principle 4, two representations of one thing will drift* — a `.geo` carrying its own
+        dimensions would mesh a geometry the rest of the suite is not analysing, and both would keep
+        working while they disagreed.
+        """
+        geo = next(p for p in self.gmsh.generate(tmp_path) if p.name.endswith(".geo"))
+        text = geo.read_text(encoding="utf-8")
+        design = default_design()
+        # The gap is the defining dimension of the cell and must appear, in metres or millimetres.
+        assert (
+            repr(design.d_gap_m) in text
+            or repr(design.d_gap_m * 1e3) in text
+            or f"{design.d_gap_m:.6g}" in text
+            or f"{design.d_gap_m * 1e3:.6g}" in text
+        ), "the .geo does not carry the profile's gap; it is describing a geometry of its own"
+
+    def test_it_asks_for_a_version_with_a_single_dash(self) -> None:
+        """``-version``. Both earlier revisions of the detect table had ``--version``, which Gmsh
+        rejects, and the failure is silent: an installed Gmsh reports no version."""
+        assert self.gmsh.tool_spec.version_args == ("-version",)
+
+    def test_its_result_values_are_mesh_statistics(self) -> None:
+        """A mesher reports a mesh, not a field. Counts and a quality metric, nothing physical.
+
+        An adapter claiming to read a velocity out of Gmsh would be claiming the mesher solved
+        something.
+        """
+        expected = set(self.gmsh.expected_values)
+        assert "n_nodes" in expected
+        assert "n_elements" in expected
+        assert "min_element_quality" in expected
+
+    def test_it_is_not_manual_only(self) -> None:
+        """Gmsh runs headless, which is why it is the one tool here that could reach COMPLETED."""
+        assert self.gmsh.tool_spec.manual_only is False
+
+
+class TestElmerAdapter:
+    """14.2 — the fidelity CFD route, and one of the competing routes the plan will not pick yet."""
+
+    @property
+    def elmer(self) -> adapters.Adapter:
+        return adapters.adapter_for("elmer")
+
+    def test_it_is_registered(self) -> None:
+        assert self.elmer.name == "elmer"
+
+    def test_it_generates_a_sif(self, tmp_path: Path) -> None:
+        """ElmerSolver reads a Solver Input File. Without one there is nothing to run."""
+        names = [p.name for p in self.elmer.generate(tmp_path)]
+        assert any(n.endswith(".sif") for n in names), f"no .sif among {names}"
+
+    def test_its_result_values_are_flow_quantities_with_units(self) -> None:
+        expected = set(self.elmer.expected_values)
+        assert any(n.endswith("_m_per_s") for n in expected), "no velocity in the read-back"
+        assert any(n.endswith("_Pa") for n in expected), "no pressure in the read-back"
+
+    def test_it_stays_unprobed_for_a_version_with_its_reason_intact(self) -> None:
+        """The open question from the detect ledger, kept open rather than guessed.
+
+        ``ElmerSolver``'s behaviour when invoked without a ``.sif`` is not established here, and a wrong
+        switch risks a solver that waits on input rather than exiting. An absent version degrades
+        visibly; an invented switch does not. Closing this needs an Elmer installation, not more
+        reading.
+        """
+        from ehdpsu import detect
+
+        assert self.elmer.tool_spec.version_args == ()
+        assert "elmer" in detect.TOOLS_WITHOUT_A_VERSION_PROBE
+        assert "NOT VERIFIED" in detect.TOOLS_WITHOUT_A_VERSION_PROBE["elmer"]
+
+    def test_its_capability_line_says_a_field_inherits_its_mesh(self) -> None:
+        """The caveat belongs where an operator reads it, which is the ``doctor`` matrix.
+
+        A CFD field carries no information about its own discretisation error without demonstrated mesh
+        convergence, however smooth it renders — and on the operator's hardware the temptation will be
+        to run a mesh that fits rather than one that converges.
+        """
+        assert "mesh" in self.elmer.capability.lower()
+
+
+class TestParaviewAdapter:
+    """15.1 — rendering. The only adapter whose output is an image rather than a number."""
+
+    @property
+    def paraview(self) -> adapters.Adapter:
+        return adapters.adapter_for("paraview")
+
+    def test_it_is_registered(self) -> None:
+        assert self.paraview.name == "paraview"
+
+    def test_it_generates_a_python_render_script(self, tmp_path: Path) -> None:
+        """Scripted, not a saved GUI state. A render nobody can regenerate is not a result."""
+        names = [p.name for p in self.paraview.generate(tmp_path)]
+        assert any(n.endswith(".py") for n in names), f"no .py render script among {names}"
+
+    def test_the_render_script_drives_pvpython_not_the_gui(self, tmp_path: Path) -> None:
+        script = next(p for p in self.paraview.generate(tmp_path) if p.name.endswith(".py"))
+        text = script.read_text(encoding="utf-8")
+        assert "paraview" in text.lower(), "the script does not import the ParaView bindings"
+
+    def test_it_is_detected_only_through_pvpython(self) -> None:
+        """Listing ``paraview.exe`` would let a version probe open a window during pytest."""
+        assert self.paraview.tool_spec.executables == ("pvpython.exe",)
+
+    def test_its_result_values_describe_the_image_and_its_field_range(self) -> None:
+        """The Task 15 test is that a render is non-degenerate with expected field ranges.
+
+        So the read-back is the image dimensions and the scalar range: a render that came out 1x1, or
+        with a flat field range, ran and produced nothing usable — the named parse hazard, in image
+        form.
+        """
+        expected = set(self.paraview.expected_values)
+        assert "image_width_px" in expected
+        assert "image_height_px" in expected
+        assert "field_range_min" in expected
+        assert "field_range_max" in expected
+
+
+class TestAttributionCoversTheNewAdapters:
+    """19.3 — every wrapped tool is credited, and the credit distinguishes written from run."""
+
+    @pytest.mark.parametrize("tool", ["Gmsh", "Elmer", "ParaView"])
+    def test_the_tool_is_named_in_attributions(self, tool: str) -> None:
+        assert tool in ATTRIBUTIONS.read_text(encoding="utf-8")
+
+    def test_attributions_distinguishes_an_adapter_from_a_run(self) -> None:
+        """A tool with an adapter and no successful run is not the same as one in use.
+
+        Gmsh, Elmer and ParaView are still **not installed** and have **never been run** in this
+        project. Recording them as tools the suite uses would be *principle 3, never report success
+        over unperformed work*, in an attribution file — the document whose whole purpose is to be
+        accurate about what this project stands on.
+        """
+        text = ATTRIBUTIONS.read_text(encoding="utf-8").lower()
+        assert "not been run" in text or "never been run" in text or "not run" in text, (
+            "ATTRIBUTIONS.md does not distinguish tools that have an adapter from tools that have "
+            "actually been run"
+        )
