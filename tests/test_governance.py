@@ -19,6 +19,7 @@ needs a purpose-built tool (``gitleaks detect --log-opts=--all``).
 from __future__ import annotations
 
 import functools
+import importlib
 import re
 import subprocess
 from pathlib import Path
@@ -1334,3 +1335,110 @@ def test_the_machine_local_tool_config_is_not_tracked() -> None:
         "tools.local.json is in the git index despite being ignored. Remove it with "
         "`git rm --cached tools.local.json`; the ignore rule does not retroactively untrack."
     )
+
+
+# ---------------------------------------------------------------------------
+# Declared registers may not shrink silently.
+#
+# Added 2026-09-16, before the first multi-step delegated batch, because this is the class of defect
+# that has escaped the Gate twice and would escape it again.
+#
+# The incident: a delegated seat rewrote detect.KNOWN_TOOLS and emptied ALL SEVEN `default_paths`
+# tuples. Every test passed. The `default-paths` detection route could no longer resolve anything for
+# any tool, the seat's report did not mention it, and nothing in the suite could have said so -- the
+# tests assert that default_paths is a tuple of Path, and an empty tuple satisfies that perfectly.
+#
+# The general shape: **reference data is checked for VALIDITY and never for PRESENCE.** A register that
+# is emptied is still well-formed. Deletion passes every schema check ever written, which is why
+# principle 2, an approximately-correct identifier is worse than an absent one, has a sibling worth
+# stating: an ABSENT register is worse than a wrong one, because a wrong entry eventually fails
+# visibly and a missing entry just stops doing its job.
+#
+# So the registers that carry the suite's accumulated knowledge get a floor, and the floor is recorded
+# here rather than inferred. Raising it is part of adding an entry.
+# ---------------------------------------------------------------------------
+
+REGISTER_FLOORS: dict[str, int] = {
+    # profile.DESIGN_VALUE_EXEMPTIONS -- every one is a reasoned decision about what is not a design
+    # value, each named in the suite-core-oracle ledger. Losing one silently re-arms the drift test
+    # against something deliberately allowed.
+    "ehdpsu.profile:DESIGN_VALUE_EXEMPTIONS": 18,
+    # detect.EXECUTABLE_PROVENANCE -- vendor-cited filenames. THIS is the register that matters most:
+    # three of its entries were fabricated before it existed, and a filename cannot be re-derived,
+    # only re-researched. An emptied entry costs a web search; an emptied register costs eleven.
+    "ehdpsu.detect:EXECUTABLE_PROVENANCE": 11,
+    # detect.GUI_EXECUTABLES -- the launch-during-pytest hazard register. Emptying it makes
+    # test_no_version_probe_targets_a_gui_executable pass by vacuity.
+    "ehdpsu.detect:GUI_EXECUTABLES": 7,
+    # The two declared-gap registers. Each entry is a stated reason a capability is absent; losing one
+    # turns a declared gap back into an undeclared one.
+    "ehdpsu.detect:TOOLS_WITHOUT_DEFAULT_PATHS": 2,
+    "ehdpsu.detect:TOOLS_WITHOUT_A_VERSION_PROBE": 5,
+    # detect.KNOWN_TOOLS and adapters.ADAPTERS -- the tool table and the adapter registry.
+    "ehdpsu.detect:KNOWN_TOOLS": 7,
+    "ehdpsu.adapters:ADAPTERS": 3,
+}
+
+
+@pytest.mark.parametrize("target", sorted(REGISTER_FLOORS))
+def test_no_declared_register_shrinks(target: str) -> None:
+    """Each register holds at least as many entries as it did when the floor was recorded.
+
+    An equality is deliberately NOT used here, unlike the Gate's collected-test floor. Registers grow
+    for good reasons and often -- a new adapter, a new vendor citation -- and requiring the floor to be
+    bumped on every addition would make it noise that gets bumped without being read. What must never
+    happen is a register getting *smaller* without somebody deciding to make it smaller.
+
+    Removing an entry is legitimate. Doing it means lowering the floor here, in a tracked file, in the
+    same change -- which is the point: it converts a silent deletion into a visible decision.
+    """
+    module_name, attr = target.split(":")
+    module = importlib.import_module(module_name)
+    register = getattr(module, attr)
+    floor = REGISTER_FLOORS[target]
+    assert len(register) >= floor, (
+        f"{target} holds {len(register)} entry/entries, below its recorded floor of {floor}. "
+        f"Reference data is normally checked for validity and never for presence, so an emptied "
+        f"register passes every other check in this suite while quietly doing nothing. If the removal "
+        f"is intended, lower the floor in REGISTER_FLOORS in the same change and say why in the "
+        f"relevant task ledger."
+    )
+
+
+def test_every_known_tool_keeps_its_default_paths_or_declares_why() -> None:
+    """The specific regression, pinned at the governance level as well as in ``test_detect.py``.
+
+    ``tests/test_detect.py`` already asserts this against ``TOOLS_WITHOUT_DEFAULT_PATHS``. It is
+    repeated here on purpose and the duplication is justified: that test lives in the file a seat is
+    told to make pass, and this one lives in the file a seat is forbidden to touch. Two different
+    guarantees — one that the contract is met, one that the contract cannot be edited into meeting.
+    """
+    from ehdpsu import detect
+
+    silently_empty = [
+        spec.name
+        for spec in detect.KNOWN_TOOLS
+        if not spec.default_paths and spec.name not in detect.TOOLS_WITHOUT_DEFAULT_PATHS
+    ]
+    assert not silently_empty, (
+        f"tools with no default_paths and no declared reason: {silently_empty}. A delegated seat "
+        f"emptied all seven of these on 2026-09-16 and every test still passed."
+    )
+
+
+def test_the_register_floors_name_registers_that_exist() -> None:
+    """A floor for a register that has been renamed away is a check guarding nothing.
+
+    The same failure the leakage-scan exemption test guards against: a register of things to check,
+    which itself drifts, and reports success over a target it can no longer find.
+    """
+    for target in REGISTER_FLOORS:
+        module_name, attr = target.split(":")
+        module = importlib.import_module(module_name)
+        assert hasattr(module, attr), (
+            f"REGISTER_FLOORS names {target}, which no longer exists. Either the register was "
+            f"renamed and this entry is stale, or it was deleted and that needs a ledger entry."
+        )
+        assert (
+            len(getattr(module, attr)) > 0
+        ), f"{target} is empty; a floor over nothing checks nothing"
