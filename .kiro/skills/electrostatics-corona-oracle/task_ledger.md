@@ -118,3 +118,107 @@ generalises well beyond FEMM.
   - **The 1° arc discretisation is untested at scale.** `ei_addarc(..., 180, 1)` gives 360 segments
     around a 25 µm circle inside a 240 mm domain — an aspect ratio of about 5×10⁵. Whether the mesher
     copes, and how long it takes, is unknown until the run completes.
+
+### 2026-09-16 — Task 13.1: FEMM solved. The project's first `solved` values
+
+The skill's standing hazard — *"FEMM has never been run in this project"* — is now retired. One run
+exists, it is recorded, and its basis is `solved`.
+
+- **Status:** COMPLETED for 13.1. **13.3 (`k_geo`) is NOT done and is not implied by this.**
+- **Files:** `artifacts/05_Solver_Runs/femm_wire_collector_2026-09-16.txt` (the transcribed result),
+  `RECORD_femm_wire_collector_2026-09-16.json` (the run record),
+  `NOTE_femm_2026-09-16_input_hash.md`; `src/ehdpsu/femm.py` and
+  `solver_inputs/ehd_wire_collector.lua` (cross-check text corrected), `tests/test_femm.py` (+1),
+  `.kiro/governance/gate.ps1` (floor 844 → 845). All the solver-run artifacts are untracked.
+- **Evidence — the run, as FEMM reported it.** Mesh 7457 nodes / 14631 elements, 2-D planar,
+  depth 150 mm.
+
+  | Quantity | Value |
+  |---|---|
+  | `E_peak` at 1.005 × r_wire | `1.322473e8` V/m (peak at 226°) |
+  | `E_peak` at 1.010 × r_wire | `1.321825e8` V/m (226°) |
+  | `E_peak` at 1.020 × r_wire | `1.315339e8` V/m (222°) |
+  | `W_stored` | `3.053114e-4` J |
+  | `C_from_energy` | `1.261617e-12` F |
+  | `Q_emitter` | `2.775559e-8` C |
+  | `C_from_charge` | `1.261618e-12` F |
+  | route ratio | `1.0000` |
+
+- **The strongest internal evidence: the two capacitance routes agree to six significant figures.**
+  Stored-energy integration and emitter-charge integration are independent computations over the
+  solved field, and they concur. That also confirms the two added block labels really are inert, since
+  the energy integral includes them.
+- **Evidence — the run record.** `basis = solved`, hash verified against the input at construction
+  time, `profile_id = mk0_benchtop_22kv`. This is the first `solved` value in the project.
+- **The defect this run exposed, and it is a documentation defect of the worst kind.** The script had
+  said, for its entire life, that its peak wire-surface field should be close to the analytical Peek
+  figure. **That is a category error.** The script applies `V_op = 22 kV`; Peek's figure is the surface
+  field **at onset**. The ratio is `E_femm / E_peek = 7.4477`, so an operator following the old wording
+  would have reported a catastrophic disagreement **where there is none.**
+  - Worse than a wrong number, because a wrong number gets questioned and a wrong *comparison* gets
+    believed. And I repeated it in the operator-facing skeleton, so the false alarm was two steps from
+    being filed as a finding.
+  - **The valid comparison**, now in the script, exploits Laplace being linear in the applied voltage:
+    one solve gives `E_per_V`, onset is where `E_surface = E_peek`, so
+    `V_onset_implied = E_peek / E_per_V`, and that is compared against the closed-form `V_onset`.
+  - Closed by `test_the_script_does_not_invite_the_invalid_peek_comparison`.
+- **Evidence — the cross-checks, computed rather than hand-worked.** All figures below are generated
+  from the parsed result and `ehdpsu.physics`:
+
+  | Comparison | Solved | Analytical | Ratio |
+  |---|---|---|---|
+  | Capacitance vs wire-above-plane `2πε₀/acosh(h/r)` | `1.261617e-12` F | `1.214832e-12` F | **1.0385** |
+  | Capacitance vs coaxial `2πε₀/ln(d/r)` | `1.261617e-12` F | `1.351634e-12` F | 0.9334 |
+  | Surface field per volt vs wire-above-plane | `6.011241e3` /m | `5.823253e3` /m | **1.0323** |
+  | Surface field per volt vs coaxial | `6.011241e3` /m | `6.479006e3` /m | 0.9278 |
+  | **Implied onset voltage vs closed form** | **2953.93 V** | **2740.67 V** | **1.0778** |
+
+- **What the numbers say, and it is coherent.** Two *independent* quantities — capacitance and
+  field-per-volt — both sit **3.2–3.9% above** the infinite-wire-above-plane analytic, in the direction
+  a finite outer boundary predicts: the walls at ±120 mm are held at 0 V and act as extra grounded
+  electrodes, adding capacitance and raising the field per volt. Agreement in **magnitude and
+  direction, on two quantities, from one solve** is much better evidence than either alone.
+  - Against the **coaxial** `ln(d/r)` approximation both are ~7% low, which is the same finding read
+    the other way: the coaxial form overestimates the surface field, therefore **underestimates the
+    onset voltage.** The solved geometry puts onset at **2954 V, 7.8% above the 2741 V closed form.**
+  - This is the first quantitative evidence in the project that the coaxial approximation
+    `V_onset = E_peek·r·ln(d/r)` is biased for a wire-to-plane geometry, and by how much. The
+    image-charge form `acosh(h/r)` is the better idealisation, as expected — and FEMM lands between
+    the two, nearer the image form.
+- **Basis arithmetic, stated because it is easy to get flattering.** The FEMM values are `solved`.
+  `E_peek` is `analytical-cited`. So the **implied onset voltage is `analytical-cited`**, not `solved`
+  — low-water-mark over its inputs. A solved field does not promote a figure that still depends on
+  Peek's empirical coefficients. *Principle 1, trust is a ceiling inherited from provenance.*
+- **The peak angle is meaningless and is recorded as such.** At `h/r = 481` the first-order variation
+  of surface field around the circumference is `2r/h = 0.416%`, so which element holds the maximum is
+  mesh noise — which is exactly why it moved from 226° to 222° between sampling radii. Nobody should
+  read a physical asymmetry into it.
+- **The reading's uncertainty is 0.54%**, the spread across the three sampling radii, and it travels
+  with the number rather than being dropped.
+- **Third instance of one trap, now recorded from a third angle.** The new test scans the script for
+  the retracted sentence, and my first draft of the correction **quoted that sentence verbatim** — so
+  the test failed on the file's own retraction. Earlier instances: a leak report pasting the term it
+  matched, and a ledger entry naming a dead path in the record of having removed it. The rule that
+  generalises all three: **a record of a defect must describe the defect, never instantiate it.** The
+  script now paraphrases and says why.
+- **Inherited:**
+  - **`k_geo` IS NOT SOLVED, and this run does not solve it.** FEMM gives the *electrostatic* geometry
+    — capacitance and field-per-volt, hence onset. `k_geo` is the prefactor in
+    `I = k·V·(V − V_onset)`, a **space-charge-limited current** coefficient. A Laplace solve carries no
+    space charge by construction, so converting this run into `k_geo` needs a cited relation connecting
+    the solved geometry to the corona current — the `C_wp·µ·ε₀` wire-to-plane form this skill names.
+    That is Task 13.3's actual content, it is where the no-curve-fitting rule bites hardest, and it has
+    not started. **Current, power, thrust and efficiency still carry the ~10× band.**
+  - **The run record's input hash no longer matches the working tree**, because the comment fix changed
+    the file. `NOTE_femm_2026-09-16_input_hash.md` covers it: 104 non-comment lines are byte-identical
+    on both sides, proven rather than asserted. A hash cannot distinguish a comment change from a
+    geometry change, and that limitation needed a separate check.
+  - **The prose should move out of the input file.** Generating the Lua with its explanation in the
+    companion `_geometry.txt` would decouple documentation changes from the input hash entirely. Right
+    change to make **before** the next solver run, not after this one.
+  - **Mesh convergence has not been demonstrated.** One mesh, 14631 elements. The 3.2–3.9% excess over
+    the infinite-plane analytic is *attributed* to the finite boundary, and that attribution is
+    untested — the way to test it is to enlarge `outer_r` and watch both quantities fall toward the
+    analytic. Until then the attribution is reasoning, not evidence.
+  - **The 1° arc discretisation coped**, which was an open question: 360 segments around a 25 µm circle
+    inside a 240 mm domain meshed to 14631 elements without complaint.

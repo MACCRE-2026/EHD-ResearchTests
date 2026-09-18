@@ -128,6 +128,36 @@ def test_readback_is_computed_not_merely_documented(lua: str) -> None:
     assert "E_peek" in lua
 
 
+def test_the_script_does_not_invite_the_invalid_peek_comparison(lua: str) -> None:
+    """The script must not tell anyone to compare its field directly against ``E_peek``.
+
+    Added 2026-09-16, immediately after the first successful run. The script had said, for its whole
+    life, that "the peak wire-surface |E| should be close to the analytical E_peek". That is a
+    **category error**: the script applies ``V_op``, while ``E_peek`` is the surface field **at
+    onset**. On the MK0 geometry the two differ by a factor of about 7.4, so an operator following
+    that sentence would have reported a catastrophic disagreement where there is none — a
+    manufactured false alarm, from documentation, in the artifact whose whole job is to be an
+    independent check.
+
+    Worse than a wrong number, because a wrong number gets questioned and a wrong *comparison* gets
+    believed.
+
+    The valid route exploits Laplace being linear in the applied voltage: one solve gives
+    ``E_per_V``, onset is where ``E_surface == E_peek``, so ``V_onset_implied = E_peek / E_per_V``,
+    and *that* is compared against the closed-form ``V_onset``.
+    """
+    lowered = lua.lower()
+    assert "should be close to the analytical e_peek" not in lowered, (
+        "the script still invites a direct comparison between its applied-voltage surface field "
+        "and Peek's onset field"
+    )
+    # The valid comparison has to be spelled out, or the caveat above is just a prohibition.
+    assert "v_onset_implied" in lowered, "the script does not state the valid comparison"
+    assert "linear" in lowered, "the script does not say why one solve suffices"
+    # And the capacitance comparison must name the image-charge form, not the coaxial one.
+    assert "acosh(h/r)" in lua, "the capacitance cross-check does not name the acosh form"
+
+
 def test_the_lua_is_written_for_the_dialect_femm_actually_embeds(lua: str) -> None:
     """FEMM 4.2 embeds Lua 4, where ``sqrt`` and ``format`` are globals.
 

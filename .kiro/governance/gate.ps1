@@ -162,6 +162,10 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 #                              read-back naming a FEMM function that does not exist. Checks on
 #                              the label count, the Lua 4 dialect, and computed-not-described
 #                              read-back
+#   FEMM first solve   845   <- the script's own Peek cross-check was a category error: it
+#                              compared an applied-voltage surface field against an onset field,
+#                              a factor of ~7.4 apart. One check that the invalid comparison
+#                              cannot return
 #
 # Correction, 2026-09-16. The line now reading 600 previously read
 # "Task (this packet) 600   <- adapter detection: 21 new tests". Both halves were wrong, and both
@@ -177,7 +181,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 844
+$COLLECTED_FLOOR = 845
 
 $result = [ordered]@{
     status          = $null

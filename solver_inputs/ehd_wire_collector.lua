@@ -228,8 +228,32 @@ end
 -- FEMM reports per the problem depth set in ei_probdef, which is the wire length,
 -- so C is the whole-cell capacitance rather than a per-metre figure.
 --
--- Cross-check: the peak wire-surface |E| should be close to the analytical E_peek
--- printed in the header. Differences come from meshing and from the finite outer
--- boundary. A large disagreement is a result to report, NOT something to tune the
--- mesh until it goes away. FEMM solves the electrostatic (Laplace) field with NO space charge, so the peak wire-surface field it reports is the CORONA-ONSET field to compare against Peek's law, not the loaded operating field (ion space charge lowers the near-wire field once current flows).
+-- HOW TO CROSS-CHECK AGAINST PEEK, AND HOW NOT TO.
+--
+-- Corrected 2026-09-16, immediately after the first successful run. This block used to
+-- direct the reader to compare the solved surface field against the analytical Peek
+-- figure as though they were the same quantity. They are not, and the wording is
+-- PARAPHRASED here rather than quoted, because a test scans this file for the old
+-- sentence and quoting it verbatim would reproduce the very thing being retracted.
+--
+-- It was a CATEGORY ERROR and it would have manufactured a false alarm: the script
+-- applies V_op, whereas Peek's figure is the surface field AT ONSET. On the MK0
+-- geometry the two differ by a factor of about 7.4, so an operator following the old
+-- wording would have reported a catastrophic disagreement where there is none.
+--
+-- The valid comparison uses the fact that Laplace is LINEAR in the applied voltage,
+-- so one solve at any voltage gives the whole geometry:
+--
+--   1. field per volt from this run:      E_per_V = E_surface / V_op
+--   2. onset is where E_surface = E_peek: V_onset_implied = E_peek / E_per_V
+--   3. compare V_onset_implied against the closed-form V_onset in the header.
+--
+-- Differences come from the geometry the closed form assumes, from meshing, and from
+-- the finite outer boundary. A disagreement is a result to report, NOT something to
+-- tune the mesh until it goes away.
+--
+-- The capacitance has an independent analytical comparison of its own: for a wire at
+-- height h above a ground plane, C' = 2*pi*eps0 / acosh(h/r) per unit length. Note
+-- acosh(h/r), NOT ln(d/r) -- the image-charge form, not the coaxial approximation.
+-- FEMM solves the electrostatic (Laplace) field with NO space charge, so the peak wire-surface field it reports is the CORONA-ONSET field to compare against Peek's law, not the loaded operating field (ion space charge lowers the near-wire field once current flows).
 -- ===============================================================
