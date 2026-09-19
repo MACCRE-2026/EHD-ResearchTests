@@ -122,13 +122,34 @@ def test_every_tracked_solver_input_is_covered_by_this_module() -> None:
 
     Otherwise an adapter could add an output that nothing compares, which is how the gap this
     module closes came to exist in the first place.
+
+    It also catches something it was not written for, and the second use is the one that has
+    actually fired. On 2026-09-18 the operator opened the tracked LTspice netlist directly from this
+    directory, and LTspice wrote an ``ehd_llc_cw.log`` beside it; this assertion went red on the next
+    Gate. **A solver run writes its byproducts into whatever directory it was pointed at**,
+    and pointing it at the tracked one puts tool exhaust in the same folder as the artifact whose
+    SHA-256 a run record carries.
+
+    The rule that follows is a working-directory discipline, not an ignore rule: **copy a solver
+    input to a scratch directory and run it there.** ``.gitignore`` does carry patterns for the
+    common exhaust extensions, but that only stops them being *staged* — it deliberately does not
+    stop this test failing, because exhaust here means the discipline slipped and that is worth
+    being told about rather than absorbed silently.
     """
     on_disk = {p.name for p in SOLVER_INPUTS.iterdir() if p.is_file()}
     covered = {*SPICE_FILES, *FEMM_FILES}
     uncovered = sorted(on_disk - covered)
+    exhaust = sorted(n for n in uncovered if Path(n).suffix in {".log", ".raw", ".net", ".fail"})
     assert not uncovered, (
         f"these files are in solver_inputs/ but no regeneration check covers them: {uncovered}. "
-        f"Add them to SPICE_FILES or FEMM_FILES, or explain why they are not generated."
+        + (
+            f"{exhaust} look like SOLVER EXHAUST: a solver was run with solver_inputs/ as its "
+            f"working directory. Move them into the datacenter and re-run the tool from a scratch "
+            f"directory instead. "
+            if exhaust
+            else ""
+        )
+        + "Otherwise add them to SPICE_FILES or FEMM_FILES, or explain why they are not generated."
     )
 
 

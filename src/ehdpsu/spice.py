@@ -273,10 +273,31 @@ def _ehd_subckt(model: EhdLoadModel) -> list[str]:
 def _llc_primary(sp: SpiceParams, f_sw_hz: float) -> list[str]:
     """Return the LLC half-bridge primary netlist lines.
 
-    Two switches (high-side ``M1``, low-side ``M2``) modelled as voltage-
+    Two switches (high-side ``S1``, low-side ``S2``) modelled as voltage-
     controlled switches driven by complementary PULSE gate sources at ``f_sw``
     with a per-edge dead-time. The resonant tank is the series ``Lr``/``Cr`` and
     the magnetizing inductance ``Lm`` sits across the transformer primary.
+
+    Corrected 2026-09-18, on the first occasion anybody loaded this netlist into LTspice
+    ---------------------------------------------------------------------------------
+    The two switches were emitted as ``M1``/``M2``, which is SPICE's **MOSFET** device letter, while
+    the model card was ``.model SW SW(...)`` — a **voltage-controlled switch** model, matching what
+    the comment always said was intended. LTspice therefore read ``M1 vbus ghi sw SW`` as a MOSFET
+    with four nodes and no model name and refused the file:
+
+        ehd_llc_cw.cir(19): Node or model name expected.
+
+    A voltage-controlled switch is ``Sxxx n+ n- nc+ nc- <model>`` — the power path first, then the
+    **control pair**, which the ``M`` form had no room for. The netlist was internally consistent in
+    every respect a reader checks and wrong in the one respect only the tool checks: 1072 passing
+    tests, a tracked regeneration diff, and planner review all missed it, because none of them is a
+    SPICE parser.
+
+    The control pairs are ground-referenced (``ghi 0`` and ``glo 0``), which is a deliberate
+    idealisation and not an oversight. A real half-bridge must reference the high-side gate to the
+    switching node and needs a bootstrap or an isolated supply; an ideal voltage-controlled switch
+    does not care about its own source potential. So this models the *topology's* behaviour and says
+    nothing about gate-drive feasibility, level shifting, or gate-charge loss.
 
     ``f_sw_hz`` is passed in rather than read from ``sp``, because the switching frequency lives in
     the profile once and reaches here through ``DesignParameters.f_sw``.
@@ -305,9 +326,14 @@ def _llc_primary(sp: SpiceParams, f_sw_hz: float) -> list[str]:
             f"Vg_lo glo 0 PULSE(0 12 {_eng(half)} {_eng(trise)} {_eng(tfall)} "
             f"{_eng(on)} {_eng(period)})"
         ),
-        "* High-side and low-side switches (voltage-controlled switches).",
-        "M1 vbus ghi sw SW",
-        "M2 sw glo 0 SW",
+        "* High-side and low-side switches, as ideal voltage-controlled switches.",
+        "* Syntax: Sxxx n+ n- nc+ nc- <model>  -- power path, then the CONTROL pair.",
+        "* The control pairs are ground-referenced, which is an idealisation: a real half-bridge",
+        "* references the high-side gate to the switching node and needs a bootstrap or an",
+        "* isolated supply. An ideal switch does not care about its own source potential, so this",
+        "* models the topology's behaviour and says nothing about gate-drive feasibility.",
+        "S1 vbus sw ghi 0 SW",
+        "S2 sw 0 glo 0 SW",
         ".model SW SW(Ron=0.05 Roff=1e9 Vt=6 Vh=0.5)",
         "* Resonant tank: series Lr (also lumps primary leakage) + Cr.",
         f"Lr sw nr {_eng(sp.lr_h)}",
@@ -487,9 +513,28 @@ def build_netlist(
         "* ---------------------------------------------------------------",
         "Xload cw_out 0 EHD_LOAD",
         "",
-        "* Suggested analysis (uncomment locally):",
-        "* .tran 1n 200u uic",
-        "* .probe",
+        "* ---------------------------------------------------------------",
+        "* Transient analysis. ACTIVE, not a commented suggestion.",
+        "*",
+        "* Until 2026-09-18 this directive was emitted commented out, under the heading",
+        "* 'Suggested analysis (uncomment locally)'. That made the tracked artifact unrunnable as",
+        "* generated: an operator had to hand-edit it before it would do anything, and the edited",
+        "* file is no longer the file whose SHA-256 the run record carries. A provenance chain that",
+        "* requires an unrecorded hand-edit in the middle is not a provenance chain.",
+        "*",
+        "* uic skips the DC operating point, which is what a Cockcroft-Walton ladder starting from",
+        "* fully discharged capacitors needs.",
+        "*",
+        "* WHETHER 2 ms REACHES STEADY STATE IS UNVERIFIED AND MUST BE CHECKED BY INSPECTION.",
+        "* 2 ms is 500 switching cycles at 250 kHz. An order-of-magnitude estimate says the smoothing",
+        "* column needs roughly 4.4 uC to reach 22 kV (5 x 1 nF in series = 200 pF), which at a few",
+        "* mA of charging current lands around 1-2 ms -- so 2 ms is plausible and the previous 200 us",
+        "* was almost certainly far too short. That estimate is an estimate. If the output is still",
+        "* rising at the end of the run, the run is NOT a result: extend it and re-run. A droop or",
+        "* ripple figure read off a still-charging waveform is a number about the transient, quoted",
+        "* as a number about the steady state.",
+        "* ---------------------------------------------------------------",
+        ".tran 0 2m 0 20n uic",
         ".end",
         "",
     ]

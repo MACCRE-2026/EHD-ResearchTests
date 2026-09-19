@@ -15,9 +15,14 @@ Vbus vbus 0 DC 400.0
 * Complementary gate drives (PULSE) with dead-time.
 Vg_hi ghi 0 PULSE(0 12 0 8e-08 8e-08 1.84e-06 4e-06)
 Vg_lo glo 0 PULSE(0 12 2e-06 8e-08 8e-08 1.84e-06 4e-06)
-* High-side and low-side switches (voltage-controlled switches).
-M1 vbus ghi sw SW
-M2 sw glo 0 SW
+* High-side and low-side switches, as ideal voltage-controlled switches.
+* Syntax: Sxxx n+ n- nc+ nc- <model>  -- power path, then the CONTROL pair.
+* The control pairs are ground-referenced, which is an idealisation: a real half-bridge
+* references the high-side gate to the switching node and needs a bootstrap or an
+* isolated supply. An ideal switch does not care about its own source potential, so this
+* models the topology's behaviour and says nothing about gate-drive feasibility.
+S1 vbus sw ghi 0 SW
+S2 sw 0 glo 0 SW
 .model SW SW(Ron=0.05 Roff=1e9 Vt=6 Vh=0.5)
 * Resonant tank: series Lr (also lumps primary leakage) + Cr.
 Lr sw nr 6e-05
@@ -97,7 +102,26 @@ Behd hv gnd I = (V(hv,gnd) > Vonset) ? (k*V(hv,gnd)*(V(hv,gnd) - Vonset)) : 0
 * ---------------------------------------------------------------
 Xload cw_out 0 EHD_LOAD
 
-* Suggested analysis (uncomment locally):
-* .tran 1n 200u uic
-* .probe
+* ---------------------------------------------------------------
+* Transient analysis. ACTIVE, not a commented suggestion.
+*
+* Until 2026-09-18 this directive was emitted commented out, under the heading
+* 'Suggested analysis (uncomment locally)'. That made the tracked artifact unrunnable as
+* generated: an operator had to hand-edit it before it would do anything, and the edited
+* file is no longer the file whose SHA-256 the run record carries. A provenance chain that
+* requires an unrecorded hand-edit in the middle is not a provenance chain.
+*
+* uic skips the DC operating point, which is what a Cockcroft-Walton ladder starting from
+* fully discharged capacitors needs.
+*
+* WHETHER 2 ms REACHES STEADY STATE IS UNVERIFIED AND MUST BE CHECKED BY INSPECTION.
+* 2 ms is 500 switching cycles at 250 kHz. An order-of-magnitude estimate says the smoothing
+* column needs roughly 4.4 uC to reach 22 kV (5 x 1 nF in series = 200 pF), which at a few
+* mA of charging current lands around 1-2 ms -- so 2 ms is plausible and the previous 200 us
+* was almost certainly far too short. That estimate is an estimate. If the output is still
+* rising at the end of the run, the run is NOT a result: extend it and re-run. A droop or
+* ripple figure read off a still-charging waveform is a number about the transient, quoted
+* as a number about the steady state.
+* ---------------------------------------------------------------
+.tran 0 2m 0 20n uic
 .end

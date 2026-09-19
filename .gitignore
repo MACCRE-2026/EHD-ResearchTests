@@ -105,3 +105,28 @@ profiles/*
 # operator's directory layout.
 # ---------------------------------------------------------------------------
 tools.local.json
+
+# ---------------------------------------------------------------------------
+# Solver exhaust inside solver_inputs/.
+#
+# solver_inputs/ is TRACKED, and a solver run writes its byproducts beside the
+# input it was given. On 2026-09-18 the operator opened
+# solver_inputs/ehd_llc_cw.cir directly in LTspice, which then wrote
+# solver_inputs/ehd_llc_cw.log into the tracked directory. Caught immediately by
+# tests/test_solver_inputs.py::test_every_tracked_solver_input_is_covered_by_this_module,
+# which asserts every file on disk there is covered by a regeneration check -- a
+# check written for drift that turned out to catch working-directory pollution too.
+#
+# These rules are belt-and-braces, NOT the fix. The fix is the discipline: copy a
+# solver input to a scratch directory and run it there, so the tracked artifact
+# whose SHA-256 a run record carries is never in the directory the tool is writing
+# into. An ignore rule stops exhaust being staged; it does not stop the test
+# failing, and it should not -- exhaust in solver_inputs/ means the discipline
+# slipped, and that is worth being told about.
+# ---------------------------------------------------------------------------
+solver_inputs/*.log
+solver_inputs/*.raw
+solver_inputs/*.op.raw
+solver_inputs/*.net
+solver_inputs/*.fail
+solver_inputs/*.msh
