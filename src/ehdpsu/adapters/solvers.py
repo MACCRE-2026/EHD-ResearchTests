@@ -200,22 +200,23 @@ class QspiceAdapter(_SpiceAdapter):
 
 
 def _no_verified_headless_run(tool: str, inputs: tuple[Path, ...]) -> RunResult:
-    """The shared refusal for a present-but-never-run headless tool.
+    """The shared response for a present-but-never-run headless tool.
 
     Gmsh and Elmer both run without a human at the console (``manual_only=False``), so they must
     never report ``MANUAL_REQUIRED`` — that state means a human must drive a GUI, and neither tool
     needs one. But no headless invocation of either has been verified on this machine, so
-    ``COMPLETED`` would be *principle 3, never report success over unperformed work*. The only
-    outcome left that is not a false statement is ``TOOL_UNAVAILABLE``: the capability has not
-    been demonstrated to work here, whatever the detection probe found.
+    ``COMPLETED`` would be *principle 3, never report success over unperformed work*.
+
+    ``PRESENT_UNVERIFIED`` is now the only outcome that is not a false statement: the tool is
+    genuinely present (the probe succeeded), but we have not yet verified it runs.
     """
     return RunResult(
-        outcome=RunOutcome.TOOL_UNAVAILABLE,
+        outcome=RunOutcome.PRESENT_UNVERIFIED,
         detail=(
-            f"{tool} may be present, but no headless invocation of it has been verified on this "
-            f"machine, so nothing was run and no closed-form estimate or stand-in figure "
-            f"substitutes for a real result. Generate the input and invoke {tool} by hand until "
-            f"that verification exists."
+            f"{tool} is present and may be functional, but no headless invocation of it has been "
+            f"verified on this machine, so nothing was run and no closed-form estimate or stand-in "
+            f"figure substitutes for a real result. Generate the input and invoke {tool} by hand "
+            f"until that verification exists."
         ),
         inputs=inputs,
     )

@@ -375,6 +375,8 @@ class TestExitCodes:
             "report",
             "crosscheck",
             "doctor",
+            "runrecord",
+            "specsheet",
         }
         for name, sub in choices.items():
             assert sub.get_default("func") is not None, f"{name} has no handler"

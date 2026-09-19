@@ -364,6 +364,97 @@ def cmd_report(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_specsheet(args: argparse.Namespace) -> int:
+    """Generate and print a markdown specification sheet from a profile.
+
+    Every figure is generated from the operating point, never typed. Upper bounds are labelled
+    on their own rows. Band and basis travel with every figure.
+    """
+    from . import specsheet
+
+    target = args.target
+    try:
+        path = _resolve(target, args.profile_dir)
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return EXIT_NOT_FOUND
+
+    try:
+        loaded = prof.load(path)
+    except prof.ProfileError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return EXIT_INVALID_PROFILE
+
+    sheet = specsheet.build_spec_sheet(loaded)
+    print(sheet)
+    return EXIT_OK
+
+
+def cmd_runrecord(args: argparse.Namespace) -> int:
+    """Emit a result-file skeleton for a named tool — FR-007, batch 2 step B.
+
+    Three result-file skeletons were produced by hand on 2026-09-16 so the first FEMM run could
+    start immediately. That worked once and does not scale: every regeneration of a solver input
+    needs a new skeleton, and the field that must be regenerated is a 64-character SHA-256.
+
+    Asking an operator to hand-copy a digest is inviting the exact transcription error that
+    ``record_from_parsed`` then rejects. The rejection is safe — a wrong hash cannot become a run
+    record — but the whole round trip is avoidable, and the operator is at a bench with a solver open.
+
+    The trap this command has to avoid: it must never emit a skeleton carrying a hash of something
+    other than the input the operator will actually feed the tool. A skeleton with a plausible-looking
+    but wrong digest is worse than no skeleton: the operator fills it in, the record is refused, and
+    the refusal names the hash rather than the cause. *Principle 2, an approximately-correct identifier
+    is worse than an absent one.*
+    """
+    tool_name = args.tool
+
+    try:
+        adapter = adapters.adapter_for(tool_name)
+    except KeyError:
+        registered = ", ".join(a.name for a in adapters.ADAPTERS)
+        print(f"error: no adapter named {tool_name!r}", file=sys.stderr)
+        print(f"registered adapters: {registered}", file=sys.stderr)
+        return EXIT_NOT_FOUND
+
+    # Generate the input artifact(s) in a temporary directory
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        try:
+            generated = adapter.generate(tmp_path)
+        except adapters.GenerateError as e:
+            print(f"error: {tool_name} adapter.generate() failed: {e}", file=sys.stderr)
+            return EXIT_INVALID_PROFILE
+
+        # Compute the hash of the generated input(s). For adapters with a single input, use that.
+        # The tests check that the hash matches what the operator will actually feed to the tool.
+        if not generated:
+            print(f"error: {tool_name} adapter.generate() produced no output", file=sys.stderr)
+            return EXIT_INVALID_PROFILE
+
+        input_hash = adapters.sha256_of_file(generated[0])
+        input_path = generated[0]
+
+    # Emit the skeleton
+    lines = [
+        adapters.RESULT_FILE_MAGIC,
+        "tool_version = (no run has occurred on this machine; captured from tool when one does)",
+        f"input_sha256 = {input_hash}",
+    ]
+
+    for value_name in adapter.expected_values:
+        lines.append(f"{value_name} = ")
+
+    # Add a comment showing the filename after a blank line for reference
+    output = "\n".join(lines)
+    output += f"\n\n# The input above was hashed from: {input_path.name}"
+
+    print(output)
+    return EXIT_OK
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Print the tool matrix: what the suite can drive, and what it cannot.
 
@@ -502,6 +593,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the external-tool matrix: what the suite can drive, and what it cannot",
     )
     doctor.set_defaults(func=cmd_doctor)
+
+    runrecord = subparsers.add_parser(
+        "runrecord",
+        help="emit a result-file skeleton for a named tool",
+    )
+    runrecord.add_argument("tool", help="tool name (registered adapter)")
+    runrecord.set_defaults(func=cmd_runrecord)
+
+    specsheet = subparsers.add_parser(
+        "specsheet",
+        help="generate a markdown specification sheet from a profile",
+    )
+    specsheet.add_argument("target", help="profile id or path")
+    specsheet.set_defaults(func=cmd_specsheet)
 
     return parser
 

@@ -74,8 +74,10 @@ def test_burst_window_selects_powered_samples() -> None:
     d = telemetry.compute_derived(df)
     window = telemetry.burst_window(d)
     assert len(window) == 9
-    assert math.isclose(window["t_s"].min(), 1.0)
-    assert math.isclose(window["t_s"].max(), 5.0)
+    # _scalar rather than a bare float(): pandas types Series reductions loosely, and the narrowing
+    # assumption is stated once in telemetry.py rather than re-asserted here.
+    assert math.isclose(telemetry._scalar(window["t_s"].min()), 1.0)
+    assert math.isclose(telemetry._scalar(window["t_s"].max()), 5.0)
     # Idle ends (P_HV = 0) are excluded.
     assert (window["P_HV_W"] > 0).all()
 

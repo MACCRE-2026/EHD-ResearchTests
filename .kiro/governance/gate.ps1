@@ -81,6 +81,7 @@
        12  CHECKER-DIVERGED  mypy and pyright examined different file sets; a blind spot exists
        13  UNDECLARED-EXCLUSION   a tool config excludes something not declared in ehd-dev-rules.md
   14  PYTEST-COVERAGE-REDUCED  tests skipped, xfailed or deselected; INCOMPLETE, not clean
+  15  PYRIGHT-UNPINNED  the node pyright that would actually run is not pinned to the lock
 
 .EXAMPLE
     pwsh -File .kiro/governance/gate.ps1
@@ -109,6 +110,7 @@ $EXIT_PYRIGHT           = 11
 $EXIT_CHECKER_DIVERGED  = 12
 $EXIT_UNDECLARED_EXCLUSION = 13
 $EXIT_PYTEST_COVERAGE   = 14
+$EXIT_PYRIGHT_UNPINNED  = 15
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
@@ -190,7 +192,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 998
+$COLLECTED_FLOOR = 1072
 
 $result = [ordered]@{
     status          = $null
@@ -200,6 +202,10 @@ $result = [ordered]@{
     stagesSkipped   = @()
     mypyFileCount   = $null
     pyrightFileCount = $null
+    # The node pyright version the run was FORCED to, read from requirements.lock. Reported because
+    # "which checker produced this verdict" is unanswerable afterwards otherwise, and a type sweep
+    # whose tool version is unrecorded is the same category of claim as a solver run nobody logged.
+    pyrightVersion  = $null
     breadth         = [ordered]@{}
     # Deliberately $null here, and assigned from $EXPECTED_SWEEP_FILES where that constant is
     # declared below. It held a hardcoded 15 until 2026-09-15, which was a SECOND representation of
@@ -235,7 +241,7 @@ function Complete-Gate {
             Write-Host "  stages SKIPPED  : $($result.stagesSkipped -join ', ')" -ForegroundColor Yellow
         }
         Write-Host "  mypy files      : $($result.mypyFileCount)"
-        Write-Host "  pyright files   : $($result.pyrightFileCount)"
+        Write-Host "  pyright files   : $($result.pyrightFileCount) (node pyright pinned to $($result.pyrightVersion))"
         $breadthLine = ($result.breadth.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '  '
         Write-Host "  sweep breadth   : $breadthLine (expected >= $($result.expectedBreadth))"
         Write-Host "  pytest          : $($result.pytestCollected) collected / $($result.pytestPassed) passed (floor $COLLECTED_FLOOR)"
@@ -318,7 +324,7 @@ function Invoke-Stage {
 #                               tests/test_adapters.py
 #   Task 13.0           45   <- src/ehdpsu/adapters/toolconfig.py
 # ---------------------------------------------------------------------------
-$EXPECTED_SWEEP_FILES = 45
+$EXPECTED_SWEEP_FILES = 48
 
 # The one seam. The reported expectation and the enforced expectation are the same value, read
 # through here, so the summary cannot describe a threshold the Gate is not applying.
@@ -411,6 +417,42 @@ Assert-Breadth 'mypy' $fileCount
 # defect in telemetry.py where a function declared to return DataFrame could return
 # `DataFrame | Series`, which mypy missed because it infers pandas loosely under
 # `ignore_missing_imports`. Any downstream caller indexing the result would have broken.
+#
+# PINNING THE THING THAT ACTUALLY RUNS
+# ------------------------------------
+# `pyright==1.1.414` in requirements.lock pins the **Python wrapper**. The wrapper is not the type
+# checker: on first use it downloads a **node package**, and that download is version-unconstrained.
+# So the lock pinned the launcher while leaving the checker floating, and the local cache already
+# held five node builds (1.1.409 through 1.1.414). requirements.lock's own stated reason for
+# pinning dev tooling -- "a pyright release changes what it reports ... which makes it useless as a
+# regression signal" -- was therefore not actually being met by the pin that claimed to meet it.
+#
+# `PYRIGHT_PYTHON_FORCE_VERSION` is the wrapper's documented control for this. It is derived from
+# the lock rather than written here as a literal: a second copy of the version would be a second
+# representation, and *principle 4, two representations of one thing will drift*, says which way
+# that goes. A drifted copy would be invisible, because pinning to the wrong version does not
+# error -- it silently type-checks with a different checker than the one the lock names.
+$lockPath = Join-Path $repoRoot 'requirements.lock'
+$pinnedPyright = $null
+if (Test-Path -LiteralPath $lockPath) {
+    $pm = [regex]::Match(
+        (Get-Content -LiteralPath $lockPath -Raw),
+        '(?m)^pyright==([0-9]+\.[0-9]+\.[0-9]+)\s*$'
+    )
+    if ($pm.Success) { $pinnedPyright = $pm.Groups[1].Value }
+}
+if (-not $pinnedPyright) {
+    Complete-Gate 'PYRIGHT-UNPINNED' $EXIT_PYRIGHT_UNPINNED (
+        "no `pyright==<version>` pin could be read from requirements.lock, so the node pyright " +
+        'that would run is whatever the wrapper last downloaded. That is not an absent tool and ' +
+        'must not be reported as one: pyright would run, examine every file, and produce a ' +
+        'verdict from an unknown version. A Gate whose result depends on an unrecorded tool ' +
+        'version is not a regression signal.'
+    )
+}
+$env:PYRIGHT_PYTHON_FORCE_VERSION = $pinnedPyright
+$result.pyrightVersion = $pinnedPyright
+
 $pyrightJson = Join-Path ([System.IO.Path]::GetTempPath()) "gate_pyright_$PID.json"
 $pyrightRaw = & $python @('-m', 'pyright', '--outputjson', 'src', 'tests') 2>&1 | Out-String
 $result.stagesRun += 'pyright'
@@ -631,7 +673,8 @@ foreach ($g in $governanceScripts) {
 
 # --- 6. terminal state ------------------------------------------------------
 Complete-Gate 'OK' $EXIT_OK (
-    "ruff and black swept $ruffCount/$blackCount files; mypy and pyright both examined " +
+    "ruff and black swept $ruffCount/$blackCount files; mypy and pyright (node $pinnedPyright, " +
+    "forced from the lock) both examined " +
     "$fileCount (agreeing, expected >= $EXPECTED_SWEEP_FILES); no undeclared exclusions; " +
     "pytest $collected collected / $passed passed at floor $COLLECTED_FLOOR; " +
     "$($governanceScripts.Count) governance verifier(s) passed. " +

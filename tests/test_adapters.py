@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from ehdpsu import adapters
+from ehdpsu import adapters, detect
 from ehdpsu.adapters import base as adapter_base
 from ehdpsu.adapters import provenance as prov
 from ehdpsu.adapters import toolconfig
@@ -295,14 +295,22 @@ class TestRunIsHonestAboutWhatHappened:
             f"that changed, this test is the place to say so deliberately."
         )
 
-    def test_run_reports_manual_or_unavailable_and_says_why(
+    def test_run_reports_a_non_completed_outcome_and_says_why(
         self, adapter: adapters.Adapter
     ) -> None:
+        """**Updated for batch 2.** ``PRESENT_UNVERIFIED`` joins the permitted outcomes.
+
+        See ``TestPresentButUnverified`` below for why the state has to exist.
+        """
         result = adapter.run(())
-        assert result.outcome in (
+        permitted = {
             adapters.RunOutcome.MANUAL_REQUIRED,
             adapters.RunOutcome.TOOL_UNAVAILABLE,
-        )
+        }
+        extra = getattr(adapters.RunOutcome, "PRESENT_UNVERIFIED", None)
+        if extra is not None:
+            permitted.add(extra)
+        assert result.outcome in permitted
         assert (
             len(result.detail.split()) >= 10
         ), f"{adapter.name}'s run detail is too terse to act on: {result.detail!r}"
@@ -1058,3 +1066,168 @@ class TestAttributionCoversTheNewAdapters:
             "ATTRIBUTIONS.md does not distinguish tools that have an adapter from tools that have "
             "actually been run"
         )
+
+
+# ---------------------------------------------------------------------------
+# Batch 2, step 14.6 — specification written 2026-09-18 BEFORE the code.
+#
+# The implementing seat for batch 1 found this gap itself and recorded it rather than papering over
+# it, which is why it is being closed rather than discovered later:
+#
+#   "RunOutcome has no state for 'headless tool present but never verified to run here', distinct
+#    from 'absent'. Gmsh and Elmer are manual_only=False, so MANUAL_REQUIRED would be false, and
+#    COMPLETED would be principle 3. TOOL_UNAVAILABLE is the least false remaining option and it
+#    conflates two different facts about the world."
+#
+# It is right, and the conflation matters. `doctor` is the command an operator runs to decide what to
+# install. A row reading `tool-unavailable` for a tool that is sitting on their disk sends them to
+# install something they already have, and worse, it makes the one status that should mean "not here"
+# mean two things — which is *principle 2, an approximately-correct identifier is worse than an
+# absent one*, applied to a status rather than a number.
+# ---------------------------------------------------------------------------
+
+
+def _present_unverified() -> adapters.RunOutcome:
+    """The outcome batch 2 adds, resolved **by name**.
+
+    Deliberately ``getattr`` rather than a direct attribute access. The member does not exist until
+    this step is implemented, and a direct reference would make **mypy** fail — which matters because
+    the Gate runs mypy *before* pytest and would abort there, hiding the test failures that are the
+    actual specification. Resolved by name, the only red the implementing seat sees is pytest, which
+    is the clean tests-first signal.
+    """
+    outcome = getattr(adapters.RunOutcome, "PRESENT_UNVERIFIED", None)
+    assert outcome is not None, (
+        "RunOutcome has no PRESENT_UNVERIFIED member. Batch 2 step 14.6 adds it: the state for a "
+        "tool that resolved but whose invocation has never been verified on this machine."
+    )
+    return outcome
+
+
+class TestPresentButUnverified:
+    """A fifth outcome: the tool resolved, and no invocation of it has been verified here."""
+
+    def test_the_outcome_exists_with_a_stable_value(self) -> None:
+        assert _present_unverified().value == "present-unverified"
+
+    def test_it_is_distinct_from_every_other_outcome(self) -> None:
+        values = [o.value for o in adapters.RunOutcome]
+        assert len(values) == len(set(values))
+        assert len(values) == 5, (
+            f"RunOutcome has {len(values)} members; batch 2 adds exactly one, giving five: "
+            f"COMPLETED, MANUAL_REQUIRED, TOOL_UNAVAILABLE, NOT_CHOSEN, PRESENT_UNVERIFIED"
+        )
+
+    def test_tool_unavailable_now_means_genuinely_absent(
+        self, adapter: adapters.Adapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With the tool resolved, no adapter may still report it unavailable.
+
+        This is the whole point of the change: ``TOOL_UNAVAILABLE`` gets its meaning back.
+        """
+        exe = Path(r"C:\stand-in") / adapter.tool_spec.executables[0]
+        probe = detect.ToolProbe(
+            name=adapter.name,
+            status=ToolStatus.PRESENT,
+            path=exe,
+            version=None,
+            routes_tried=("configured-path",),
+            note="stand-in probe for this test",
+        )
+        monkeypatch.setattr(type(adapter), "detect", lambda self, configured_path=None: probe)
+        outcome = adapter.run(()).outcome
+        assert outcome is not adapters.RunOutcome.TOOL_UNAVAILABLE, (
+            f"{adapter.name} reports TOOL_UNAVAILABLE for a tool that resolved. That sends an "
+            f"operator to install something already on their disk."
+        )
+
+    @pytest.mark.parametrize("name", ["gmsh", "elmer"])
+    def test_a_headless_tool_that_resolved_reports_present_unverified(
+        self, name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Headless tools cannot report ``MANUAL_REQUIRED`` — nobody has to drive a GUI.
+
+        And they cannot report ``COMPLETED``, because no invocation of either has been verified on
+        this machine. ``PRESENT_UNVERIFIED`` is the honest answer and now it exists.
+        """
+        adapter = adapters.adapter_for(name)
+        assert adapter.tool_spec.manual_only is False, f"{name} is not a headless tool"
+        exe = Path(r"C:\stand-in") / adapter.tool_spec.executables[0]
+        probe = detect.ToolProbe(
+            name=name,
+            status=ToolStatus.PRESENT,
+            path=exe,
+            version=None,
+            routes_tried=("configured-path",),
+            note="stand-in probe for this test",
+        )
+        monkeypatch.setattr(type(adapter), "detect", lambda self, configured_path=None: probe)
+        result = adapter.run(())
+        assert result.outcome is _present_unverified()
+        assert len(result.detail.split()) >= 10
+
+    @pytest.mark.parametrize("name", ["femm", "ltspice", "qspice", "paraview"])
+    def test_a_gui_tool_that_resolved_still_reports_manual(
+        self, name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The new state does not swallow the GUI case. A human still has to press the button."""
+        adapter = adapters.adapter_for(name)
+        exe = Path(r"C:\stand-in") / adapter.tool_spec.executables[0]
+        probe = detect.ToolProbe(
+            name=name,
+            status=ToolStatus.PRESENT,
+            path=exe,
+            version=None,
+            routes_tried=("configured-path",),
+            note="stand-in probe for this test",
+        )
+        monkeypatch.setattr(type(adapter), "detect", lambda self, configured_path=None: probe)
+        assert adapter.run(()).outcome is adapters.RunOutcome.MANUAL_REQUIRED
+
+    def test_an_absent_tool_still_reports_unavailable(self, adapter: adapters.Adapter) -> None:
+        """Nothing is installed for gmsh/elmer/paraview here, so the absent branch is live."""
+        probe = adapter.detect()
+        if probe.status is not ToolStatus.PRESENT:
+            assert adapter.run(()).outcome is adapters.RunOutcome.TOOL_UNAVAILABLE
+
+    def test_the_doctor_matrix_surfaces_the_new_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``doctor`` is where an operator reads this, so the row must carry it.
+
+        A state that exists in the enum and never reaches the matrix is a distinction the operator
+        cannot act on.
+        """
+        gmsh = adapters.adapter_for("gmsh")
+        probe = detect.ToolProbe(
+            name="gmsh",
+            status=ToolStatus.PRESENT,
+            path=Path(r"C:\stand-in\gmsh.exe"),
+            version=None,
+            routes_tried=("configured-path",),
+            note="stand-in probe for this test",
+        )
+        monkeypatch.setattr(type(gmsh), "detect", lambda self, configured_path=None: probe)
+        rows = {r.tool: r for r in adapters.doctor_rows()}
+        assert rows["gmsh"].run_mode == "present-unverified"
+
+    def test_a_present_unverified_tool_is_not_counted_as_unresolved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """It resolved. It is not a missing capability, it is an unexercised one.
+
+        ``unresolved_capabilities`` drives the "go and install these" summary, so listing a tool
+        that is already installed there would be the same wrong instruction in a second place.
+        """
+        gmsh = adapters.adapter_for("gmsh")
+        probe = detect.ToolProbe(
+            name="gmsh",
+            status=ToolStatus.PRESENT,
+            path=Path(r"C:\stand-in\gmsh.exe"),
+            version=None,
+            routes_tried=("configured-path",),
+            note="stand-in probe for this test",
+        )
+        monkeypatch.setattr(type(gmsh), "detect", lambda self, configured_path=None: probe)
+        rows = adapters.doctor_rows()
+        assert "gmsh" not in adapters.unresolved_capabilities(rows)

@@ -1175,6 +1175,74 @@ def test_gate_treats_reduced_coverage_as_its_own_status() -> None:
     )
 
 
+def test_requirements_lock_pins_pyright() -> None:
+    """The lock carries a ``pyright==<version>`` line the Gate can read.
+
+    Precondition for the two tests below: they assert the Gate *reads* the pin, which is worthless
+    if there is nothing to read. A lock without the line would make the Gate exit
+    ``PYRIGHT-UNPINNED`` on every run, which is loud — but the reason would arrive as a Gate
+    failure rather than as a named test, and the reader would go looking in the wrong file.
+    """
+    lock = (REPO_ROOT / "requirements.lock").read_text(encoding="utf-8")
+    assert re.search(
+        r"(?m)^pyright==\d+\.\d+\.\d+\s*$", lock
+    ), "requirements.lock has no exact pyright== pin for gate.ps1 to force the node package to"
+
+
+def test_gate_forces_the_node_pyright_version() -> None:
+    """The Gate pins the checker that runs, not only the wrapper that launches it.
+
+    ``pyright==1.1.414`` in the lock pins the **Python wrapper**. The wrapper then downloads a
+    **node package**, and that download was version-unconstrained: the local cache already held
+    1.1.409, 1.1.410, 1.1.411, 1.1.413 and 1.1.414. So requirements.lock's stated purpose for
+    pinning dev tooling — that an unpinned release "makes the Gate useless as a regression signal"
+    — was not being served by the pin that claimed to serve it.
+
+    Found 2026-09-18 while attributing 26 pyright errors that a handover had described as absent.
+    The errors were real and pre-existing; the investigation is what surfaced the unpinned node
+    package underneath them.
+
+    This is the failure shape the project keeps meeting: a control that is present, internally
+    consistent, and narrower than everyone believed. *Principle 5, specifications drift from
+    implementations unless mechanically checked* — the lock's comment was the specification.
+    """
+    text = GATE.read_text(encoding="utf-8")
+    assert "PYRIGHT_PYTHON_FORCE_VERSION" in text, (
+        "gate.ps1 does not set PYRIGHT_PYTHON_FORCE_VERSION, so the node pyright that actually "
+        "type-checks is whatever the wrapper last downloaded, regardless of the lock."
+    )
+    assert "PYRIGHT-UNPINNED" in text, (
+        "gate.ps1 has no distinct status for an unreadable pyright pin. It must not be folded "
+        "into TOOLING-ABSENT: pyright would still run and still produce a verdict, from an "
+        "unknown version. 'Present but unverified' is not 'absent'."
+    )
+
+
+def test_gate_derives_the_pyright_pin_from_the_lock() -> None:
+    """The version is read from requirements.lock, never written into gate.ps1 as a literal.
+
+    A literal would be a second representation of the pin, and *principle 4, two representations
+    of one thing will drift*. This drift would be silent in the worst way: forcing a version the
+    lock does not name does not error, it type-checks with a different checker and reports success.
+    """
+    text = GATE.read_text(encoding="utf-8")
+    assert "requirements.lock" in text, (
+        "gate.ps1 does not read requirements.lock, so its pyright pin cannot be derived from the "
+        "single place the project declares it."
+    )
+    forcing_lines = [
+        ln
+        for ln in text.splitlines()
+        if "PYRIGHT_PYTHON_FORCE_VERSION" in ln and not ln.strip().startswith("#")
+    ]
+    assert forcing_lines, "no non-comment line sets PYRIGHT_PYTHON_FORCE_VERSION"
+    for line in forcing_lines:
+        assert not re.search(r"\d+\.\d+\.\d+", line), (
+            f"gate.ps1 forces a hardcoded pyright version: {line.strip()!r}. Read it from "
+            f"requirements.lock instead so the lock stays the only place the version lives."
+        )
+
+
 @pytest.mark.parametrize(
     "script",
     [

@@ -1574,3 +1574,95 @@ Closes the outstanding half of 13.0. Recorded here because these strings are wha
     about any solver having produced a number — consistent with `adapter-contract.md`'s "as of
     now, no FEMM, SPICE, Elmer or ParaView run has occurred in this project," now also true of
     Gmsh.
+
+---
+
+## 2026-09-18 — Batch 2: run-record CLI, `PRESENT_UNVERIFIED`, spec-sheet generator
+
+**Seat:** Claude Haiku 4.5 (0.40x). **Planner:** Claude Opus 5 (2.20x). Tests-first: 62 planner-written
+failures across three files, `tests/` off-limits to the seat.
+
+- **Delivered.** Step A `PRESENT_UNVERIFIED` as a fifth `RunOutcome` (336/336 in
+  `tests/test_adapters.py`); step B the run-record CLI (33/33); step C the spec-sheet generator
+  (15/16). The one remaining failure was the planner's, not the seat's — see below.
+- **Evidence** (observed, `.venv` Python 3.12.8, after the three planner fixes):
+  - Gate: **status OK, exit 0.** `ruff and black swept 48/48 files; mypy and pyright (node 1.1.414,
+    forced from the lock) both examined 48 (agreeing, expected >= 48); no undeclared exclusions;
+    pytest 1072 collected / 1072 passed at floor 1072; 2 governance verifier(s) passed.`
+  - Run as a background process, output captured to `$env:TEMP` and read with the file-reading tool;
+    the terminal was stopped afterwards. `0 skipped, 0 xfail/xpass, 0 deselected`.
+  - `$COLLECTED_FLOOR` 1069 -> 1072, measured: the three governance tests added by fix 2 below.
+
+### Three planner errors, owned
+
+1. **Two mutually unsatisfiable tests.** `test_it_names_the_profile_it_describes` required the
+   profile id `mk0_benchtop_22kv` in the sheet;
+   `test_no_number_in_the_sheet_is_absent_from_the_computation` then read the `22` inside that
+   identifier as an ungenerated number. **No implementation could have passed both.** The seat
+   reported the contradiction instead of deleting a test or bending the generator around it, which
+   is the correct behaviour and is the first time a seat has pushed back on the specification rather
+   than the code. Resolved by narrowing what counts as a number — a profile id is a **label**, not a
+   figure — rather than widening the allowed set, which would have let a genuinely typed `22`
+   through anywhere in the document.
+2. **`tests/test_cli.py` was not pre-updated.** Adding the `runrecord` and `specsheet` verbs made the
+   file's subcommand-set assertion stale, so the seat had to edit two lines in `tests/` to make a
+   planner-written test match a planner-written requirement. That is a **planner omission, not a
+   seat violation** of the tests-first protocol. It went unreported by the seat, which is the
+   reporting gap, not the edit.
+3. **The handover asserted pyright was clean when 26 errors pre-existed.** Stated without running
+   it. *Principle 3, never report success over unperformed work*, in a handover — and it cost the
+   seat attribution work, because it had to prove the errors were not its own. It did so correctly:
+   `telemetry.py` imports nothing the batch touched.
+
+### The defect the attribution work surfaced: pyright's node package was never pinned
+
+`requirements.lock` pins `pyright==1.1.414`. That is the **Python wrapper**. The wrapper downloads a
+**node package** on first use, and that download was version-unconstrained — the local cache held
+1.1.409, 1.1.410, 1.1.411, 1.1.413 and 1.1.414.
+
+So the lock's own stated reason for pinning dev tooling —
+
+> a pyright release changes what it reports ... which makes it useless as a regression signal
+
+— **was not being served by the pin that claimed to serve it.** Task 6 wrote that sentence and then
+pinned the launcher.
+
+Fixed by forcing `PYRIGHT_PYTHON_FORCE_VERSION` in `gate.ps1`, **derived from the lock** rather than
+written as a literal, plus a new exit code `15 PYRIGHT-UNPINNED` and three governance tests. A new
+code rather than reusing `9 TOOLING-ABSENT` for the same reason step A of this very batch added
+`PRESENT_UNVERIFIED`: an unpinned pyright is not an absent one. It runs, examines all 48 files, and
+returns a verdict from an unknown version.
+
+Rejected: excluding `telemetry.py` from pyright. The project declares **zero exclusions** and
+`ehd-dev-rules.md` holds that narrowing a sweep destroys its purpose. Also rejected: pinning to an
+older node version, which would have hidden the 26 errors rather than fixing them — the same move
+wearing a different hat.
+
+*Principle 5, specifications drift from implementations unless mechanically checked.* The lock's
+comment was the specification, and nothing checked it.
+
+### `telemetry.py`'s 24 errors, and one helper rather than twelve casts
+
+All 24 were `float(...)` around a pandas Series reduction inside `summarize()`. pandas' stubs type
+`Series.min()/.max()/.mean()` as `Series | Unknown | Any` because on a *DataFrame* they reduce along
+an axis; on a 1-D Series they always return a scalar. mypy does not report it, because it infers
+pandas loosely under `ignore_missing_imports` — **the second concrete case of the two checkers
+catching different classes**, which is why both are in the Gate.
+
+Fixed with one `_scalar(value: Any) -> float` helper replacing 13 call sites, not 13 inline casts:
+*principle 4, two representations of one thing will drift*. The assumption being made is stated once
+where it can be argued with. The helper narrows a **type**, not a number — no value changes, so
+nothing touches basis, band or provenance.
+
+Two errors in `tests/test_telemetry.py` were the same shape and now call `telemetry._scalar`.
+
+### Carried forward
+
+- **`python -m pyright` with no arguments analyses `artifacts/`** and reports 10 extra
+  `reportMissingImports` from the rolled-back attempt-1 output sitting in the datacenter. The Gate
+  is unaffected — it passes `src tests` explicitly — but a by-hand pyright run on this machine gives
+  36 errors where the Gate gives 26, and the difference is entirely untracked local files. Worth
+  knowing before anyone attributes a count.
+- Elmer's `.sif` boundary conditions carry `Name` but no `Target Boundaries` and may not bind.
+- `backup_datacenter.ps1` has still never been run.
+- There is still no repo-wide check that no test is skipped at source level.

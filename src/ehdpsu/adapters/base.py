@@ -66,7 +66,7 @@ class GenerateError(AdapterError):
 class RunOutcome(enum.Enum):
     """How an invocation attempt ended.
 
-    Four states, because two of them are the ones that keep the suite honest about what it has
+    Five states, because two of them are the ones that keep the suite honest about what it has
     actually done.
     """
 
@@ -87,6 +87,12 @@ class RunOutcome(enum.Enum):
     of plan Task 14 — in-process axisymmetric Python, Elmer, OpenFOAM — where mapping every route
     without committing to one is the explicit intent. No adapter returns it yet, and a test asserts
     that, so the day one does is visible in a diff."""
+
+    PRESENT_UNVERIFIED = "present-unverified"
+    """The tool resolved during detection, but no headless invocation of it has been verified on this
+    machine. Returned by adapters for tools that are GUI-driven (manual_only=True) and whose runs
+    cannot therefore be automated. Distinct from TOOL_UNAVAILABLE: the tool is genuinely present, just
+    not yet verified to run here."""
 
 
 @dataclass(frozen=True)

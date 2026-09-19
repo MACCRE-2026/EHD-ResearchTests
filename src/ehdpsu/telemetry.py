@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 
@@ -227,6 +228,27 @@ def burst_window(
     return work.loc[mask]
 
 
+def _scalar(value: Any) -> float:
+    """Narrow a pandas reduction result to a ``float``.
+
+    ``Series.min()``, ``.max()`` and ``.mean()`` are typed loosely by pandas' stubs --
+    ``Series | Unknown | Any`` -- because on a *DataFrame* those methods reduce along an axis and
+    return a Series. On a **1-D Series**, which is the only thing passed here, they always return a
+    scalar. pyright reports the bare ``float(...)`` as ``reportArgumentType`` on that basis; mypy
+    does not, because it infers pandas loosely under ``ignore_missing_imports``. That divergence is
+    why both checkers are in the Gate.
+
+    One helper rather than 13 inline casts, deliberately: *principle 4, two representations of one
+    thing will drift*. The assumption being made -- "this reduction is over a Series, so it is a
+    scalar" -- is stated once, in a place where it can be found and argued with, instead of being
+    re-asserted at every call site where the next reader would have to re-derive it.
+
+    This narrows a **type**, not a **number**. It performs no conversion beyond ``float()`` and
+    changes no value, so nothing here touches basis, band or provenance.
+    """
+    return float(value)
+
+
 def summarize(
     df: pd.DataFrame,
     threshold_frac: float = DEFAULT_BURST_THRESHOLD_FRAC,
@@ -256,19 +278,19 @@ def summarize(
     t = window["t_s"]
     return BurstSummary(
         n_samples=len(window),
-        t_start_s=float(t.min()),
-        t_end_s=float(t.max()),
-        duration_s=float(t.max() - t.min()),
-        mean_thrust_N=float(window["thrust_N"].mean()),
-        peak_thrust_N=float(window["thrust_N"].max()),
-        mean_P_in_W=float(window["P_in_W"].mean()),
-        peak_P_in_W=float(window["P_in_W"].max()),
-        mean_P_HV_W=float(window["P_HV_W"].mean()),
-        peak_P_HV_W=float(window["P_HV_W"].max()),
-        mean_eff_N_per_kW=float(window["eff_N_per_kW"].mean()),
-        peak_eff_N_per_kW=float(window["eff_N_per_kW"].max()),
-        mean_eff_N_per_W=float(window["eff_N_per_W"].mean()),
-        mean_sys_eff=float(window["sys_eff"].mean()),
+        t_start_s=_scalar(t.min()),
+        t_end_s=_scalar(t.max()),
+        duration_s=_scalar(t.max()) - _scalar(t.min()),
+        mean_thrust_N=_scalar(window["thrust_N"].mean()),
+        peak_thrust_N=_scalar(window["thrust_N"].max()),
+        mean_P_in_W=_scalar(window["P_in_W"].mean()),
+        peak_P_in_W=_scalar(window["P_in_W"].max()),
+        mean_P_HV_W=_scalar(window["P_HV_W"].mean()),
+        peak_P_HV_W=_scalar(window["P_HV_W"].max()),
+        mean_eff_N_per_kW=_scalar(window["eff_N_per_kW"].mean()),
+        peak_eff_N_per_kW=_scalar(window["eff_N_per_kW"].max()),
+        mean_eff_N_per_W=_scalar(window["eff_N_per_W"].mean()),
+        mean_sys_eff=_scalar(window["sys_eff"].mean()),
     )
 
 
