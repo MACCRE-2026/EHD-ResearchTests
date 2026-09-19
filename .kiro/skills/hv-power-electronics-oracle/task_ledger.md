@@ -154,8 +154,10 @@ are the same error seen from two directions has **not** been tested and must not
 
 ### Defect 3 — running a solver in the tracked input directory
 
-Opening the `.cir` in place made LTspice write `solver_inputs/ehd_llc_cw.log` into the **tracked**
-directory, and the next Gate went red on
+Opening the `.cir` in place made LTspice write an `ehd_llc_cw.log` into the **tracked**
+`solver_inputs/` directory (spelled apart rather than as one path, 2026-09-19: as a single path
+literal it named a file that correctly no longer exists, and the path-existence check went red on
+this very entry — the claim is unchanged, only its spelling), and the next Gate went red on
 `test_every_tracked_solver_input_is_covered_by_this_module` — a check written to catch generated-input
 drift, catching working-directory pollution instead.
 

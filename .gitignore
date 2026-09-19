@@ -130,3 +130,4 @@ solver_inputs/*.op.raw
 solver_inputs/*.net
 solver_inputs/*.fail
 solver_inputs/*.msh
+solver_inputs/*.qraw
