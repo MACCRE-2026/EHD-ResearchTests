@@ -377,6 +377,12 @@ class TestExitCodes:
             "doctor",
             "runrecord",
             "specsheet",
+            # Added 2026-09-19 as part of CRSDL Task 19's specification, BEFORE the verb exists, so
+            # this assertion is red until the batch lands. That ordering is deliberate: in batch 2
+            # the planner added two verbs without updating this set, which forced the implementing
+            # seat to edit a file the protocol puts off limits. The seat did the right thing and the
+            # planner had created the situation. Pre-declaring the verb here is the fix.
+            "runs",
         }
         for name, sub in choices.items():
             assert sub.get_default("func") is not None, f"{name} has no handler"

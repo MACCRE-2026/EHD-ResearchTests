@@ -151,6 +151,26 @@ class TestTheClassificationFollowsTheVerdicts:
             "the version string."
         )
 
+    def test_femm_may_only_leave_the_version_probe_register_against_evidence(self) -> None:
+        """The counterpart to the lowered register floor.
+
+        ``REGISTER_FLOORS`` was dropped from 5 to 4 on 2026-09-19 so that this task would not stall
+        on a shrink the planner could already predict — if a headless route works, femm gains
+        ``version_args`` and ``test_detect.py`` forces its entry out of this register.
+
+        That concession is paid for here. The entry may leave, but only when a working route is
+        recorded, so the register cannot quietly lose a member for any other reason. A lowered floor
+        with no compensating assertion would be a checked thing becoming an unchecked one.
+        """
+        if "femm" in detect.TOOLS_WITHOUT_A_VERSION_PROBE:
+            return
+        working = {k: v for k, v in _routes().items() if v.startswith("works")}
+        assert working, (
+            "femm has been removed from TOOLS_WITHOUT_A_VERSION_PROBE but no FEMM automation route "
+            "is recorded as working. The register floor was lowered to 4 specifically to allow this "
+            "removal against evidence; without the evidence the removal is an undeclared gap."
+        )
+
     def test_no_working_route_is_recorded_as_a_verified_negative(self) -> None:
         """The honest outcome if FEMM cannot be driven headlessly here.
 

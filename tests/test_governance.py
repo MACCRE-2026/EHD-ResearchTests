@@ -1481,7 +1481,17 @@ REGISTER_FLOORS: dict[str, int] = {
     # The two declared-gap registers. Each entry is a stated reason a capability is absent; losing one
     # turns a declared gap back into an undeclared one.
     "ehdpsu.detect:TOOLS_WITHOUT_DEFAULT_PATHS": 2,
-    "ehdpsu.detect:TOOLS_WITHOUT_A_VERSION_PROBE": 5,
+    # Lowered 5 -> 4 on 2026-09-19, in advance and deliberately. CRSDL Task 7 examines FEMM's
+    # headless routes; if one works, femm gains `version_args` and
+    # `test_detect.py::test_declared_reasons_are_substantive_and_not_orphaned` then forces its entry
+    # out of this register, dropping it to 4. The implementing seat may not edit anything under
+    # `tests/`, so a floor of 5 would be a guaranteed stall on a shrink the planner can already
+    # predict.
+    #
+    # This does not make the shrink free. `tests/test_femm_automation.py` asserts that femm's
+    # ABSENCE from this register requires a recorded working route, so the entry can only leave
+    # against evidence. The floor still guards the other four.
+    "ehdpsu.detect:TOOLS_WITHOUT_A_VERSION_PROBE": 4,
     # detect.KNOWN_TOOLS and adapters.ADAPTERS -- the tool table and the adapter registry.
     "ehdpsu.detect:KNOWN_TOOLS": 7,
     "ehdpsu.adapters:ADAPTERS": 3,

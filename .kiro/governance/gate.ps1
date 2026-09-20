@@ -192,7 +192,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 1136
+$COLLECTED_FLOOR = 1137
 
 $result = [ordered]@{
     status          = $null
