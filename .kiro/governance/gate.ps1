@@ -192,7 +192,7 @@ $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
 # as an EQUALITY rather than a lower bound: a floor below the real count is slack that accumulates
 # silently, while a floor above it fails immediately and obviously.
 # ---------------------------------------------------------------------------
-$COLLECTED_FLOOR = 1072
+$COLLECTED_FLOOR = 1136
 
 $result = [ordered]@{
     status          = $null
@@ -324,7 +324,7 @@ function Invoke-Stage {
 #                               tests/test_adapters.py
 #   Task 13.0           45   <- src/ehdpsu/adapters/toolconfig.py
 # ---------------------------------------------------------------------------
-$EXPECTED_SWEEP_FILES = 48
+$EXPECTED_SWEEP_FILES = 53
 
 # The one seam. The reported expectation and the enforced expectation are the same value, read
 # through here, so the summary cannot describe a threshold the Gate is not applying.
@@ -517,20 +517,51 @@ $pytest = Invoke-Stage 'pytest' @('-m', 'pytest', '-q')
 # collection error is hiding". Red for the right reason and blamed on the wrong cause, which sends
 # the reader hunting an ImportError that does not exist.
 # *Principle 2, an approximately-correct identifier is worse than an absent one.*
+#
+# THE SECOND BUG IN THIS PARSER, found 2026-09-19 while writing the CRSDL batch specifications.
+#
+# `Get-PytestCount` matched `(\d+) <word>` anywhere in pytest's ENTIRE output, not on its summary
+# line. pytest prints each failing test's source -- docstring included -- in the traceback, and two
+# of the new specification files contain the phrase `"1 error"` while explaining why they resolve a
+# module dynamically. So `$errored` parsed as 1 from a test's own prose, `collected` was
+# reconstructed as 1136 against an actual 1135, and the Gate reported a count one higher than
+# reality.
+#
+# Inflation is the dangerous direction: it would mask a genuine drop in collected tests, which is
+# precisely what the floor exists to catch. A test's *prose* could silently raise the Gate's count.
+# *Principle 2, an approximately-correct identifier is worse than an absent one* -- the number was
+# non-empty, plausible, and wrong.
+#
+# Fixed by anchoring to the summary line. pytest ends with `52 failed, 1083 passed in 61.65s`, so a
+# line carrying both an outcome count and a duration is the only place counts are read from.
+function Get-PytestSummaryLine {
+    param([string] $Output)
+    $lines = @(($Output -split "`r?`n") | Where-Object { $_.Trim() })
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        if ($lines[$i] -match '\d+\s+(passed|failed|error|errors|skipped|xfailed|xpassed|deselected|no tests ran)' -and
+            $lines[$i] -match '\bin\s+[\d.]+s') {
+            return $lines[$i]
+        }
+    }
+    return ''
+}
+
+$summaryLine = Get-PytestSummaryLine $pytest.Output
+
 function Get-PytestCount {
-    param([string] $Output, [string] $Word)
-    $m = [regex]::Match($Output, "(\d+) $Word")
+    param([string] $Summary, [string] $Word)
+    $m = [regex]::Match($Summary, "(\d+) $Word")
     if ($m.Success) { return [int]$m.Groups[1].Value }
     return 0
 }
 
-$passed = Get-PytestCount $pytest.Output 'passed'
-$skipped = Get-PytestCount $pytest.Output 'skipped'
-$xfailed = Get-PytestCount $pytest.Output 'xfailed'
-$xpassed = Get-PytestCount $pytest.Output 'xpassed'
-$failed = Get-PytestCount $pytest.Output 'failed'
-$errored = Get-PytestCount $pytest.Output 'error'
-$deselected = Get-PytestCount $pytest.Output 'deselected'
+$passed = Get-PytestCount $summaryLine 'passed'
+$skipped = Get-PytestCount $summaryLine 'skipped'
+$xfailed = Get-PytestCount $summaryLine 'xfailed'
+$xpassed = Get-PytestCount $summaryLine 'xpassed'
+$failed = Get-PytestCount $summaryLine 'failed'
+$errored = Get-PytestCount $summaryLine 'error'
+$deselected = Get-PytestCount $summaryLine 'deselected'
 
 $collected = $null
 $cm = [regex]::Match($pytest.Output, '(\d+) tests? collected')

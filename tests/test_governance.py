@@ -1175,6 +1175,46 @@ def test_gate_treats_reduced_coverage_as_its_own_status() -> None:
     )
 
 
+def test_gate_reads_pytest_counts_from_the_summary_line_only() -> None:
+    """The Gate's outcome counts come from pytest's summary line, never from its whole output.
+
+    **Second defect found in this parser, 2026-09-19**, while writing the CRSDL batch
+    specifications. ``Get-PytestCount`` matched ``(\\d+) <word>`` anywhere in pytest's output — and
+    pytest prints each failing test's source, docstring included, in the traceback. Two of the new
+    specification files contain the phrase ``"1 error"`` while explaining why they resolve a module
+    dynamically, so ``$errored`` parsed as **1 from a test's own prose**. ``collected`` was then
+    reconstructed as 1136 against an actual 1135.
+
+    Inflation is the dangerous direction. The collected floor exists to catch tests silently
+    vanishing, and a count a docstring can raise is a floor a collection error can hide under.
+    *Principle 2, an approximately-correct identifier is worse than an absent one* — the number was
+    non-empty, plausible and wrong, which is worse than no number at all.
+
+    The first defect in the same parser, recorded 2026-09-15, was reading only ``(\\d+) passed`` and
+    falling back to it for ``collected``. Two bugs in one function, both about reading a number from
+    roughly the right place.
+    """
+    text = GATE.read_text(encoding="utf-8")
+
+    assert "Get-PytestSummaryLine" in text, (
+        "gate.ps1 has no function isolating pytest's summary line, so outcome counts are parsed "
+        "from the whole output and any test whose prose contains '<digits> failed' or "
+        "'<digits> error' corrupts them."
+    )
+    calls = re.findall(r"Get-PytestCount\s+(\$\w+)", text)
+    assert calls, "no call to Get-PytestCount found; the parser's shape changed"
+    offenders = sorted({c for c in calls if c != "$summaryLine"})
+    assert not offenders, (
+        f"Get-PytestCount is called with {offenders} rather than $summaryLine. Counts must be read "
+        f"from the summary line only; the full output contains every failing test's source."
+    )
+    for word in ("passed", "failed", "skipped", "xfailed", "xpassed", "deselected", "error"):
+        assert f"Get-PytestCount $summaryLine '{word}'" in text, (
+            f"the {word!r} count is not read from the summary line. Every outcome is parsed "
+            f"separately and all of them must come from the same anchored source."
+        )
+
+
 def test_requirements_lock_pins_pyright() -> None:
     """The lock carries a ``pyright==<version>`` line the Gate can read.
 
