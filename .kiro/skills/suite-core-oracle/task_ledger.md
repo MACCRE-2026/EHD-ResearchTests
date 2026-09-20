@@ -1666,3 +1666,73 @@ Two errors in `tests/test_telemetry.py` were the same shape and now call `teleme
 - Elmer's `.sif` boundary conditions carry `Name` but no `Target Boundaries` and may not bind.
 - `backup_datacenter.ps1` has still never been run.
 - There is still no repo-wide check that no test is skipped at source level.
+
+---
+
+## 2026-09-19 — CRSDL opens; and the Gate's pytest parser was wrong a second time
+
+**Branch `CRSDL` at `a1b3d88`.** `main` stays green at `78802c3` as the rollback point. The epoch's
+specifications for batches A, D and E are committed on the branch and the Gate there is
+**deliberately red at `PYTEST-FAILED`** — 1136 collected, 1084 passed, **52 failed, every one of them
+in the five new specification files.** Nothing pre-existing is broken. That is the state batches 1 and
+2 were both run from; what a red Gate must never be is *accidental*.
+
+Evidence, observed: `ruff 53/53, black 53/53, mypy 53, pyright 53 (node 1.1.414 forced from the
+lock); 0 skipped / 0 xfail / 0 deselected`. Floors moved with the specification:
+`$COLLECTED_FLOOR` 1072 → **1136**, `$EXPECTED_SWEEP_FILES` 48 → **53**.
+
+### The Gate defect: a test's own prose could inflate the collected count
+
+`Get-PytestCount` matched `(\d+) <word>` anywhere in pytest's **entire output** rather than on its
+summary line. pytest prints each failing test's source — docstring included — in the traceback, and
+two of the new specification files contain the phrase `"1 error"` while explaining why they resolve a
+module dynamically. So `$errored` parsed as **1 from a test's own prose**, and `collected` was
+reconstructed as 1136 against an actual 1135.
+
+**Inflation is the dangerous direction.** The collected floor exists to catch tests silently
+vanishing; a count that a docstring can raise is a floor that a collection error can hide under. The
+number was non-empty, plausible and wrong — *principle 2, an approximately-correct identifier is
+worse than an absent one*.
+
+Fixed by anchoring every count to the summary line via `Get-PytestSummaryLine`, with
+`test_gate_reads_pytest_counts_from_the_summary_line_only` asserting no call reads the full output
+and that all seven outcome words are read from the anchored source.
+
+**This is the second defect in the same function.** The first, recorded 2026-09-15, was reading only
+`(\d+) passed` and falling back to it for `collected`, which reported `PYTEST-UNDER-FLOOR: a
+collection error is hiding` whenever anything was skipped. Two bugs, both about reading a number from
+roughly the right place. Worth noting for whoever touches it third.
+
+### Two findings that came from writing tests rather than running anything
+
+**`backup_datacenter.ps1` cannot take a milestone snapshot, and it collides with CRSDL Task 1.** Its
+declared source set is `artifacts/` tiers and `.kiro/` directories — **no codebase at all**, so a
+"milestone" taken today would restore a plan describing software absent from the snapshot. Separately
+`artifacts/01_Collaborator_Conversations` is declared `Required` while Task 1 empties it, so every
+later run would exit 3 `SOURCE-MISSING` — a collision between two tasks that neither would notice
+alone. And the `*.log` exclusion now removes preserved run evidence. The script has **still never
+run**; all three were found by writing its tests.
+
+**Commit `9fe8c12` put six unsourced figures into a tracked artifact — mine.** The active `.tran`
+directive landed with an order-of-magnitude justification quoting `200 pF`, `22 kV`, `2 ms`,
+`250 kHz` and `200 us`, none of which traces to the profile. It has its own named test so a later
+reader can see that the planner wrote the defect three commits before writing the check that catches
+it.
+
+### Two corrections to the new check, both made before it was committed
+
+**It was unit-blind.** `3-5 s bursts` passed the first draft because the figure `5` matched
+`N_stages = 5` — a dimensionless stage count standing in for five seconds. A non-empty, plausible,
+wrong match silently satisfying the check that existed to catch it. Traceability now carries the unit
+alongside the value.
+
+**It was scoped by category, not by exclusion.** The first draft swept every string literal in the
+package: **82 figures for 3 real defects.** Most of the remainder were not near-misses but the wrong
+*kind* — `ehdpsu.claims` and `ehdpsu.breadcrumb` hold inherited claim text **on purpose** and are the
+audit trail rather than a drift risk, and `ehdpsu.mk0_reference` holds pinned reference values already
+declared in `DESIGN_VALUE_EXEMPTIONS`. A check reporting 80 non-findings gets switched off, and worse,
+invites bulk registration that would sweep the real findings in with the noise. Restated over
+**generated artifacts** — where an unsupported figure actually reaches a reader — it leaves 6
+untraceable figures, every one meaningful. That is narrowing by type, which is a different act from
+narrowing a sweep to dodge findings, and the distinction is recorded here because the next reader
+should be able to argue with it.

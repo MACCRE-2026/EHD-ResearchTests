@@ -44,6 +44,13 @@ LIVE_TIER = REPO_ROOT / "artifacts" / "05_Solver_Runs"
 
 A_VALID_DIGEST = "0" * 64
 
+# Synthetic records below name their inputs under `synthetic_inputs/`, never `solver_inputs/`, and
+# the reason is not cosmetic. `test_every_project_path_named_in_docs_and_output_exists` requires every
+# `solver_inputs/...` string in TRACKED source to name a file that exists — so realistic-looking
+# fixture paths turn red the moment the file is committed, and **not before**, because that check
+# only scans tracked files. Exactly what happened on the first CRSDL commit: the specification was
+# green locally and the act of committing it made the check fire. Do not tidy these back.
+
 
 def _validate(tier: Path) -> Any:
     """Call the validator, or fail with what its interface must be.
@@ -115,20 +122,20 @@ class TestACleanTierReportsNothing:
         assert _validate(tier) == []
 
     def test_a_record_alone_is_clean(self, tier: Path) -> None:
-        _write_record(tier, "femm_cell", "2026-09-16", "femm", "solver_inputs/a.lua")
+        _write_record(tier, "femm_cell", "2026-09-16", "femm", "synthetic_inputs/a.lua")
         assert _validate(tier) == []
 
     def test_a_pending_with_no_record_is_clean(self, tier: Path) -> None:
         """Work genuinely still owed is the state ``PENDING`` exists to express."""
-        _write_pending(tier, "qspice_llc", "qspice", "solver_inputs/b.cir")
+        _write_pending(tier, "qspice_llc", "qspice", "synthetic_inputs/b.cir")
         assert _validate(tier) == []
 
 
 class TestTheOrphanedPending:
     def test_a_pending_beside_a_completed_record_is_a_finding(self, tier: Path) -> None:
         """The specific F9 defect: FEMM completed on 2026-09-16 and its skeleton never retired."""
-        _write_pending(tier, "femm_cell", "femm", "solver_inputs/a.lua")
-        _write_record(tier, "femm_cell", "2026-09-16", "femm", "solver_inputs/a.lua")
+        _write_pending(tier, "femm_cell", "femm", "synthetic_inputs/a.lua")
+        _write_record(tier, "femm_cell", "2026-09-16", "femm", "synthetic_inputs/a.lua")
         assert "orphaned-pending" in _kinds(_validate(tier)), (
             "a PENDING coexisting with a completed RECORD for the same tool and input must be "
             "reported. It is indistinguishable from work still owed."
@@ -140,14 +147,14 @@ class TestTheOrphanedPending:
         *Principle 2, an approximately-correct identifier is worse than an absent one* — matching on
         a human-chosen slug would silently miss a retired pending whose name was tidied.
         """
-        _write_pending(tier, "femm_wire_collector", "femm", "solver_inputs/a.lua")
-        _write_record(tier, "femm_cell_v2", "2026-09-16", "femm", "solver_inputs/a.lua")
+        _write_pending(tier, "femm_wire_collector", "femm", "synthetic_inputs/a.lua")
+        _write_record(tier, "femm_cell_v2", "2026-09-16", "femm", "synthetic_inputs/a.lua")
         assert "orphaned-pending" in _kinds(_validate(tier))
 
     def test_a_pending_for_a_different_input_is_not_a_finding(self, tier: Path) -> None:
         """Two runs of one tool on different inputs are two runs, not a stale skeleton."""
-        _write_pending(tier, "femm_other", "femm", "solver_inputs/other.lua")
-        _write_record(tier, "femm_cell", "2026-09-16", "femm", "solver_inputs/a.lua")
+        _write_pending(tier, "femm_other", "femm", "synthetic_inputs/other.lua")
+        _write_record(tier, "femm_cell", "2026-09-16", "femm", "synthetic_inputs/a.lua")
         assert "orphaned-pending" not in _kinds(_validate(tier))
 
 
@@ -225,7 +232,7 @@ class TestTheCliVerb:
         """*A new capability is a library function plus a CLI verb.*"""
         from ehdpsu import cli
 
-        _write_record(tier, "femm_cell", "2026-09-16", "femm", "solver_inputs/a.lua")
+        _write_record(tier, "femm_cell", "2026-09-16", "femm", "synthetic_inputs/a.lua")
         assert cli.main(["runs", "--tier", str(tier)]) == cli.EXIT_OK
         assert capsys.readouterr().out.strip()
 
@@ -235,8 +242,8 @@ class TestTheCliVerb:
         """A tier with findings must not exit 0, or nothing scripted will ever notice."""
         from ehdpsu import cli
 
-        _write_pending(tier, "femm_cell", "femm", "solver_inputs/a.lua")
-        _write_record(tier, "femm_cell", "2026-09-16", "femm", "solver_inputs/a.lua")
+        _write_pending(tier, "femm_cell", "femm", "synthetic_inputs/a.lua")
+        _write_record(tier, "femm_cell", "2026-09-16", "femm", "synthetic_inputs/a.lua")
         code = cli.main(["runs", "--tier", str(tier)])
         assert code != cli.EXIT_OK
         assert "orphaned" in capsys.readouterr().out.lower()
