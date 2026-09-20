@@ -455,6 +455,40 @@ def cmd_runrecord(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_runs(args: argparse.Namespace) -> int:
+    """Validate a solver-run tier and report findings.
+
+    The tier lives in ``artifacts/05_Solver_Runs/`` and holds run records, pending markers and
+    incomplete-run notes. This command scans it and reports three classes of defects:
+
+    - **orphaned-pending**: A PENDING skeleton beside a completed RECORD for the same tool and
+      input.
+    - **undeclared-prefix**: A file using a naming prefix not in TIER_FILE_PREFIXES.
+    - **incomplete-record**: A RECORD_*.json missing tool_version, input_sha256, or values.
+
+    An empty tier reports no findings.
+    """
+    tier_path = Path(args.tier)
+
+    if not tier_path.is_dir():
+        print(f"error: {tier_path} is not a directory", file=sys.stderr)
+        return EXIT_NOT_FOUND
+
+    from .adapters.provenance import validate_tier
+
+    findings = validate_tier(tier_path)
+
+    if not findings:
+        print(f"✓ {tier_path.name}/: tier is clean")
+        return EXIT_OK
+
+    print(f"findings in {tier_path}:")
+    for finding in findings:
+        print(f"  {finding.kind:20s}  {finding.detail}")
+
+    return 1  # Non-zero on findings
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Print the tool matrix: what the suite can drive, and what it cannot.
 
@@ -593,6 +627,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the external-tool matrix: what the suite can drive, and what it cannot",
     )
     doctor.set_defaults(func=cmd_doctor)
+
+    runs = subparsers.add_parser(
+        "runs",
+        help="validate a solver-run tier",
+    )
+    runs.add_argument("--tier", required=True, help="path to the solver-run tier")
+    runs.set_defaults(func=cmd_runs)
 
     runrecord = subparsers.add_parser(
         "runrecord",

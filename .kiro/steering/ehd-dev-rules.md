@@ -207,6 +207,13 @@ command against the `fs_write` it depends on.
 
 Long-running processes — dev servers, watchers, solver GUIs — are not launched from a
 blocking shell call.
+
+**A scripted contract loop cannot contain a GUI step.** The electrostatics route (FEMM), the fluid
+route (Elmer/OpenFOAM), the circuit route (LTspice/QSPICE) and the visualization route (ParaView)
+all ship as GUI tools. A headless loop — where a request goes in and a contract or rejection comes
+out, one command, no human intervention — requires that each tool can be driven without opening its
+GUI. This is why `manual_only=True` in `detect.py` matters: it marks tools where a working route
+has not been established, and those tools cannot be part of an automated contract loop.
 ### The terminal is not a stable container
 
 Two failure modes were diagnosed on 2026-09-15, after months of the operator's own terminals

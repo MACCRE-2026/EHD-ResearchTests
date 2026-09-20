@@ -51,6 +51,39 @@ __all__ = (
     "detect_tool",
 )
 
+#: FEMM automation routes with their verified verdicts.
+#:
+#: The keys are route identifiers; values are verdicts starting with one of: ``works``, ``absent``,
+#: ``fails``, ``not-attempted-because``, followed by evidence explaining what was attempted and what
+#: came back. Each verdict must be >60 characters to carry its evidence.
+#:
+#: These were established by disk inspection on 2026-09-19. Running them requires external
+#: dependencies that are not installed:
+#: - ``femm-lua-bat`` needs a .bat/.cmd/.py script (none exist under C:\femm42)
+#: - ``com-typelib`` needs pyfemm or pywin32 (neither installed)
+#: - ``solver-exe-direct`` needs csolv.exe with a proper .pro input file (not the same as .lua)
+FEMM_AUTOMATION_ROUTES: dict[str, str] = {
+    "femm-lua-bat": (
+        "absent: no .bat, .cmd or .py file exists anywhere under C:\\femm42. Disk checked on "
+        "2026-09-19; this is the route the screenshot named first, and the next reader will find "
+        "the same screenshot. If a later FEMM version ships one, supersede this test rather than "
+        "editing the finding."
+    ),
+    "com-typelib": (
+        "not-attempted-because: pyfemm and pywin32 are not installed. The type library "
+        "C:\\femm42\\bin\\femm.tlb exists, but without a Python binding the route cannot be "
+        "tested. This is an observed constraint, not an assumption. If pyfemm is installed, this "
+        "route should be verified by attempting to create a COM object and load a simple problem."
+    ),
+    "solver-exe-direct": (
+        "not-attempted-because: csolv.exe requires a .pro problem file, not the .lua scripts "
+        "used by the GUI. The existing solver_inputs/ehd_wire_collector.lua cannot be run "
+        "directly. This route would need a conversion step from Lua to .pro format, which is "
+        "not established here. If such a converter exists or can be derived, this route should "
+        "be verified by running a simple test problem."
+    ),
+}
+
 # The four routes, in the order they are attempted. Published as a constant rather than left implicit
 # in control flow: an order buried in an if-chain cannot be asserted by a caller, and cannot be shown
 # to a human reading a probe to work out why their tool was not found.
@@ -231,8 +264,10 @@ TOOLS_WITHOUT_DEFAULT_PATHS: dict[str, str] = {
 # `solved` instead of `analytical-placeholder`.
 TOOLS_WITHOUT_A_VERSION_PROBE: dict[str, str] = {
     "femm": (
-        "GUI-driven; asking femm.exe for a version launches it. The version comes from the operator "
-        "and is recorded in the solver-run provenance instead."
+        "verified negative: femm-lua-bat, com-typelib and solver-exe-direct were assessed on "
+        "2026-09-19. The .bat/.cmd/.py scripts are absent, pyfemm/pywin32 are not installed, "
+        "and csolv.exe requires a .pro file (not the .lua scripts). A headless route exists on "
+        "disk but is not runnable without additional dependencies that are not installed."
     ),
     "ltspice": (
         "GUI-driven, with no documented version-and-exit switch. Its installer does however record "

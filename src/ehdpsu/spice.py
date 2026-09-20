@@ -79,9 +79,8 @@ class SpiceParams:
     """Parameters for the generated LLC + transformer + CW netlist.
 
     Defaults are documented order-of-magnitude values consistent with a PQ26/20
-    ferrite core driving a 5-stage Cockcroft-Walton multiplier for an ~80-120 W
-    burst target. They are engineering starting points for local simulation, not
-    calibrated measurements.
+    ferrite core driving a 5-stage Cockcroft-Walton multiplier. They are
+    engineering starting points for local simulation, not calibrated measurements.
 
     Attributes
     ----------
@@ -484,6 +483,14 @@ def build_netlist(
     sp = sp or default_spice_params()
     model = ehd_load_model(p)
 
+    # Get the derived power from the profile's operating point
+    from . import profile as prof
+    from .operating_point import operating_point
+
+    loaded_profile = prof.default_profile()
+    op = operating_point(loaded_profile)
+    power_w = op.as_dict()["power"].value
+
     lines: list[str] = [
         "* ===============================================================",
         "* EHD PSU driver-chain netlist (LLC + PQ26/20 xfmr + CW + EHD load)",
@@ -493,7 +500,7 @@ def build_netlist(
             f"* Design: V_op={p.V_op / 1e3:.0f} kV, f_sw={p.f_sw / 1e3:.0f} kHz, "
             f"N_stages={p.N_stages}, C_stage={p.C_stage * 1e9:.0f} nF."
         ),
-        "* Target: single EHD cell, ~80-120 W, 3-5 s bursts.",
+        f"* HV output power: {power_w:.4g} W (derived from profile, secondary side of converter).",
         "* ===============================================================",
         "",
     ]
@@ -525,14 +532,10 @@ def build_netlist(
         "* uic skips the DC operating point, which is what a Cockcroft-Walton ladder starting from",
         "* fully discharged capacitors needs.",
         "*",
-        "* WHETHER 2 ms REACHES STEADY STATE IS UNVERIFIED AND MUST BE CHECKED BY INSPECTION.",
-        "* 2 ms is 500 switching cycles at 250 kHz. An order-of-magnitude estimate says the smoothing",
-        "* column needs roughly 4.4 uC to reach 22 kV (5 x 1 nF in series = 200 pF), which at a few",
-        "* mA of charging current lands around 1-2 ms -- so 2 ms is plausible and the previous 200 us",
-        "* was almost certainly far too short. That estimate is an estimate. If the output is still",
-        "* rising at the end of the run, the run is NOT a result: extend it and re-run. A droop or",
-        "* ripple figure read off a still-charging waveform is a number about the transient, quoted",
-        "* as a number about the steady state.",
+        "* WHETHER THIS REACHES STEADY STATE IS UNVERIFIED AND MUST BE CHECKED BY INSPECTION.",
+        "* If the output is still changing at the end of the run, the run is NOT a result: extend",
+        "* it and re-run. A droop or ripple figure read off a still-charging waveform is a number",
+        "* about the transient, quoted as a number about the steady state.",
         "* ---------------------------------------------------------------",
         ".tran 0 2m 0 20n uic",
         ".end",

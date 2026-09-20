@@ -36,6 +36,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from ..basis import Basis
 from .base import ParsedResult
@@ -178,3 +179,143 @@ def write_run_record(record: RunRecord, destination: Path) -> Path:
         json.dumps(record.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return destination
+
+
+#: The tier file naming convention. Every file in ``artifacts/05_Solver_Runs/`` must use one of
+#: these prefixes, or it is a finding.
+TIER_FILE_PREFIXES: frozenset[str] = frozenset(("RECORD_", "PENDING_", "INCOMPLETE_"))
+
+
+class TierFinding(NamedTuple):
+    """One defect in a solver-run tier."""
+
+    kind: str
+    """Machine-readable category: ``orphaned-pending``, ``undeclared-prefix``, ``incomplete-record``,
+    ``unreadable``, etc."""
+
+    detail: str
+    """Human-readable description, naming files involved."""
+
+
+def validate_tier(tier: Path) -> list[TierFinding]:
+    """Scan a solver-run tier and report findings.
+
+    An empty result means the tier is clean. Every finding carries a machine-readable ``kind`` and
+    a ``detail`` naming the files involved.
+
+    Findings reported:
+    - ``orphaned-pending``: A PENDING exists for which a completed RECORD already exists (matched
+      on tool and input_path, not on slug).
+    - ``undeclared-prefix``: A file uses a prefix not in TIER_FILE_PREFIXES.
+    - ``incomplete-record``: A RECORD_*.json lacks tool_version, input_sha256, or values, or has
+      any None values in the values dict.
+    - ``unreadable``: A RECORD_*.json could not be parsed as JSON.
+    """
+    findings: list[TierFinding] = []
+
+    if not tier.is_dir():
+        return findings
+
+    records: dict[tuple[str, str], Path] = {}  # (tool, input_path) -> RECORD path
+    pendings: list[tuple[Path, str, str]] = []  # [(path, tool, input_path), ...]
+
+    for item in sorted(tier.iterdir()):
+        if not item.is_file():
+            continue
+
+        name = item.name
+        matched_prefix = False
+
+        # Check if this file matches any declared prefix
+        for prefix in TIER_FILE_PREFIXES:
+            if name.startswith(prefix):
+                matched_prefix = True
+
+                if prefix == "RECORD_":
+                    # Parse the RECORD_*.json
+                    try:
+                        payload = json.loads(item.read_text(encoding="utf-8"))
+                    except (json.JSONDecodeError, OSError):
+                        findings.append(
+                            TierFinding(
+                                kind="unreadable",
+                                detail=f"{name}: could not be parsed as JSON",
+                            )
+                        )
+                        break
+
+                    # Check required fields
+                    tool = (
+                        payload.get("tool", "").strip()
+                        if isinstance(payload.get("tool"), str)
+                        else ""
+                    )
+                    input_path_str = (
+                        payload.get("input_path", "").strip()
+                        if isinstance(payload.get("input_path"), str)
+                        else ""
+                    )
+                    tool_version = (
+                        payload.get("tool_version", "").strip()
+                        if isinstance(payload.get("tool_version"), str)
+                        else ""
+                    )
+                    input_sha256 = (
+                        payload.get("input_sha256", "").strip()
+                        if isinstance(payload.get("input_sha256"), str)
+                        else ""
+                    )
+                    values = payload.get("values", {})
+
+                    # Check for incomplete record: missing fields or None values
+                    has_none_values = isinstance(values, dict) and any(
+                        v is None for v in values.values()
+                    )
+
+                    if not tool_version or not input_sha256 or not values or has_none_values:
+                        findings.append(
+                            TierFinding(
+                                kind="incomplete-record",
+                                detail=f"{name}: missing or empty tool_version, input_sha256, or values",
+                            )
+                        )
+                    else:
+                        records[(tool, input_path_str)] = item
+
+                elif prefix == "PENDING_":
+                    # Collect PENDING info for orphan detection
+                    try:
+                        text = item.read_text(encoding="utf-8")
+                        lines = {}
+                        for line in text.split("\n"):
+                            if "=" in line:
+                                key, val = line.split("=", 1)
+                                lines[key.strip()] = val.strip()
+                        tool = lines.get("tool", "").strip()
+                        input_path_str = lines.get("input_path", "").strip()
+                        if tool and input_path_str:
+                            pendings.append((item, tool, input_path_str))
+                    except (OSError, ValueError):
+                        pass
+
+                break
+
+        if not matched_prefix:
+            findings.append(
+                TierFinding(
+                    kind="undeclared-prefix",
+                    detail=f"{name}: uses a prefix not in TIER_FILE_PREFIXES",
+                )
+            )
+
+    # Check for orphaned pendings (must happen after all records are cataloged)
+    for pending_path, tool, input_path_str in pendings:
+        if (tool, input_path_str) in records:
+            findings.append(
+                TierFinding(
+                    kind="orphaned-pending",
+                    detail=f"{pending_path.name} is orphaned beside {records[(tool, input_path_str)].name}",
+                )
+            )
+
+    return findings

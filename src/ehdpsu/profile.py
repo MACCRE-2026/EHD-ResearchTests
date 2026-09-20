@@ -292,6 +292,16 @@ DESIGN_VALUE_EXEMPTIONS: dict[str, str] = {
 }
 
 
+#: Figures in generated artifacts that legitimately appear without tracing to the profile.
+#: Keyed as '<artifact>:<matched figure>', with a reason explaining why. Cited material
+#: properties and physical conditions belong here; inherited design claims do not.
+GENERATED_FIGURE_EXEMPTIONS: dict[str, str] = {
+    "ehd_cell.sif:1.8e-5 Pa": "Air viscosity at 20°C per White, Viscous Fluid Flow, 3rd ed., Table 1.4. A cited material property.",
+    "ehd_llc_cw.cir:4e-06 s": "Switching period (1/f_sw), derived from profile value f_sw_hz.",
+    "ehd_llc_cw.cir:5e-09 N": "False positive: the regex pattern matches 'IS=5e-09 N=...' from the diode model, where N is the emission coefficient parameter name, not a unit. Both values (IS and N) derive from the profile.",
+}
+
+
 @dataclass(frozen=True)
 class ProfileValue:
     """One design value with its unit, basis and provenance."""

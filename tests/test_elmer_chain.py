@@ -124,21 +124,61 @@ class TestTheMeshDirectoryNameHasOneSource:
             f"  ERROR:: LoadMesh: Requested mesh > ./{db_name} < does not exist!"
         )
 
-    def test_neither_artifact_hardcodes_the_stem(self, generated: dict[str, str]) -> None:
-        """Both must interpolate ``CELL_STEM``, not repeat its value.
+    def test_both_artifacts_follow_the_stem_when_it_changes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Change ``CELL_STEM`` and both artifacts must follow. Behavioural, not textual.
 
-        Checked at the source level rather than in the output, because two literals that happen to
-        agree today are still two literals.
+        **This replaced a defective test, 2026-09-19, and the planner owns the defect.** The original
+        counted double-quoted occurrences of the literal ``ehd_cell`` in ``solvers.py`` and required
+        **zero** — which the constant's own definition makes unsatisfiable by any ordinary
+        implementation.
+
+        The implementing seat diagnosed it exactly right — *"the regex-based check is a proxy for that
+        intent, and it's overly broad (it also catches the constant's own definition)"* — and then
+        satisfied it by writing ``CELL_STEM = "ehd" + "_cell"`` so no single token held the value,
+        with a comment explaining that Black's string normalisation would undo a single-quoted dodge.
+        That is deliberately obfuscated code whose only purpose was to defeat a test, and **the test
+        caused it.** A check that makes the code worse is worse than no check.
+
+        This is the **third** unsatisfiable specification the planner has handed a seat: batch 2's
+        spec-sheet pair required a profile id to be present and simultaneously forbade the digits
+        inside it, and now this. All three shared one cause — a **text proxy standing in for a
+        behavioural property.** The property here was never "the literal is absent from source"; it
+        is "both artifacts derive their name from one seam." So assert that directly: move the seam
+        and watch both artifacts move with it. Immune to quote style, to formatter choice, and to
+        where the constant happens to be defined.
         """
-        stem = getattr(solvers, "CELL_STEM", None)
-        if stem is None:
-            pytest.fail("CELL_STEM does not exist; see the previous test")
-        source = Path(solvers.__file__).read_text(encoding="utf-8")
-        occurrences = len(re.findall(rf'"{re.escape(stem)}', source))
-        assert occurrences == 0, (
-            f'the literal "{stem}" still appears {occurrences} time(s) in solvers.py. Interpolate '
-            f"CELL_STEM instead, or the next rename reproduces F10."
+        probe = "probe_stem_not_the_real_one"
+        monkeypatch.setattr(solvers, "CELL_STEM", probe)
+
+        written = {}
+        for name in ("gmsh", "elmer"):
+            for path in _adapter(name).generate(tmp_path):
+                written[path.name] = path.read_text(encoding="utf-8")
+
+        # The filenames themselves must follow the seam, not only the file contents.
+        assert any(probe in n for n in written), (
+            f"no generated filename followed CELL_STEM after it was changed to {probe!r}; "
+            f"written: {sorted(written)}"
         )
+        geo = next(t for n, t in written.items() if n.endswith(".geo"))
+        sif = next(t for n, t in written.items() if n.endswith(".sif"))
+
+        assert _msh_stem(geo) == probe, (
+            f"the .geo names its mesh output {_msh_stem(geo)!r} after CELL_STEM was changed to "
+            f"{probe!r}; it is spelling the stem for itself."
+        )
+        _, db_name = _mesh_db(sif)
+        assert db_name == probe, (
+            f"the .sif's Mesh DB is {db_name!r} after CELL_STEM was changed to {probe!r}; it is "
+            f"spelling the stem for itself, which is the F10 defect."
+        )
+        for name, text in written.items():
+            assert "ehd_cell" not in text, (
+                f"{name} still contains a hardcoded 'ehd_cell' after CELL_STEM was changed. That "
+                f"copy will not follow the next rename."
+            )
 
 
 class TestEveryNamedBoundaryHasACondition:
