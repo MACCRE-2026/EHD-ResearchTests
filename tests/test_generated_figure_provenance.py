@@ -86,7 +86,14 @@ _FIGURE = re.compile(
     # false negative. Accepted because the period on the same line (`4e-06 s`) catches the identical
     # class, and because a false positive on every field quantity in every artifact is the failure
     # mode that gets a check switched off.
-    r"(?![A-Za-z0-9_/])"
+    #
+    # `=` excluded 2026-09-20. SPICE model cards assign parameters by name, so `.model DHV D(IS=5e-09
+    # N=2.0 ...)` presented `5e-09 N` where `N` is the diode's emission coefficient, not newtons. A
+    # token immediately followed by `=` is a parameter name being assigned a value, never a unit. The
+    # false positive had been REGISTERED as an exemption, which filed a matcher defect in a physics
+    # register and would have left it live for every future artifact; the entry is removed and the
+    # cause fixed here instead.
+    r"(?![A-Za-z0-9_/=])"
 )
 
 

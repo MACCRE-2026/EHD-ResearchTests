@@ -1819,3 +1819,111 @@ is the same reasoning that produced the pyright node-package pin. Astral documen
 from Black* and state the output should not deviate for code already formatted by Black, so on this
 repository the swap would likely be a no-op diff. Against: it changes a Gate stage and the declared
 `BLACK-FAILED` exit code 3, so it wants its own commit rather than riding along with anything else.
+
+---
+
+## 2026-09-20 — Verification of batches A, D and E, and six fixes
+
+**Full write-up:** `artifacts/00_Governance/2026-09-20_VERIFICATION_crsdl_batches_A_D_E.md` (untracked).
+**Evidence after the fixes:** `pytest 1141 collected / 1141 passed`, ruff and black clean,
+`$COLLECTED_FLOOR` 1137 → 1141.
+
+**Four of the six findings were planner defects, not seat defects, and the two seat defects both
+descended from a planner defect.** The failure mode this round was not execution — it was
+specifications that encoded the planner's own errors with the authority of a check.
+
+### The finding that matters most: a green validator over the defect it was built for
+
+`validate_tier` reported **zero findings** on a live tier containing `PENDING_femm_wire_collector.txt`
+beside its completed `RECORD` — the exact orphan audit finding F9 named, sitting there for four days.
+
+Two defects in one branch. It matched on `(tool, input_path)`, and the skeletons this project actually
+generates carry **`tool_version` and `input_sha256` and neither of those keys** — so the real pendings
+were dropped before matching. And a pending it could not parse was **silently discarded** rather than
+reported, which is *an unrecognised shape is an error, never an empty result* violated in the tier's own
+validator.
+
+**The fixtures were mine, and they all carried `input_path`.** Fifteen synthetic tests green, the
+live-tier check green, defect untouched — *principle 6* — and green precisely because the planner wrote
+the fixtures, so they agreed with the planner's idea of the format rather than with the format.
+
+Fixed: match on the **input hash** first (it is the input's identity; a path only describes where a copy
+sat), path second, and report `unidentifiable-pending` rather than skipping. Three regression tests
+added, one of them built to the real byte-shape including its comment block, plus one asserting a
+commented-out `tool =` inside a comment is not a declaration.
+
+`SUPERSEDED_` added to `TIER_FILE_PREFIXES`; the FEMM skeleton renamed to
+`SUPERSEDED_femm_wire_collector.txt` naming its record, and the long-overdue
+`INCOMPLETE_qspice_llc_cw_2026-09-19.md` written — its values had been in a governance document for
+four days with no artifact in the tier.
+
+### A test that asserted a token carried my domain error with a check's authority
+
+I recorded `csolv.exe` as FEMM's electrostatics solver, inferring it from the name. Read from the
+binaries' own ASCII strings:
+
+```
+belasolv.exe -> .fee     electrostatics   <- what ehd_wire_collector.lua writes via ei_saveas
+csolv.exe    -> .fec     current flow
+hsolv.exe    -> .feh     heat flow
+fkn.exe      -> .fem     magnetics
+```
+
+Then `test_the_direct_solver_route_names_the_electrostatics_solver` **asserted `"csolv" in verdict`**, so
+the register was *required* to name the wrong tool, and the seat complied correctly with a false
+requirement.
+
+And `test_the_verdict_carries_its_evidence` asserted only `len(verdict) > 60` — rewarding **length, not
+truth**. What passed it: *"csolv.exe requires a .pro problem file"*. **FEMM has no `.pro` format.** A
+fabricated extension scored identically to an observation.
+
+Fixed by replacing prose with structure. `FEMM_AUTOMATION_ROUTES` now maps each route to a frozen
+`RouteVerdict(verdict, tried, observed, checked_on)`, so "did anyone look" and "what came back" are
+separately empty-checkable — a property, where a character count was a token assertion wearing property
+clothing. New test forbids any verdict naming a format FEMM does not have.
+
+**The corrected verdict reverses the earlier reading.** `belasolv.exe` exists, takes `.fee`, and this
+project already generates a `.fee` — so the direct-solver route is **untried, not blocked**. Also
+observed: `belasolv.exe` times out on both a bare invocation and `-h` under a 12 s timeout, so it does
+not self-describe from a command line. And the `TOOLS_WITHOUT_A_VERSION_PROBE` reason said
+`verified negative:` over three routes of which **one** was verified and two were untried — *principle 3
+in the negative direction*, reporting a stronger status than the work supports. Corrected to state one
+verified absence and two unexamined routes.
+
+### Three smaller ones
+
+- **The burst-duration withdrawal was one third done.** `3-5 s` survived in two `telemetry.py`
+  docstrings because the check I narrowed to generated artifacts cannot see prose that never reaches
+  one. That narrowing was deliberate — the source-text version found 82 figures for 3 defects — and this
+  was its price. Now withdrawn from both, with the reason stated in the docstring rather than a field
+  invented to hold an unsourced figure.
+- **A matcher defect had been filed in a physics register.** `5e-09 N` was registered as an exemption
+  with an accurate diagnosis — the pattern read `N=2.0`, the diode's emission coefficient, as newtons.
+  Correct diagnosis, wrong home: it files tooling debt in a physics register and leaves the false
+  positive live for every future artifact. Entry removed, cause fixed — a token followed by `=` is a
+  parameter name, never a unit.
+- **The Elmer domain is closed on three sides.** `Emitter`, `Collector` and `SideWalls` are all no-slip
+  with only `TopFarField` open. Harmless while there is no body force, since the solve is trivially
+  zero and no air must enter; wrong the moment one exists, because a thruster needs an inlet. Not
+  fixed — choosing the lateral condition is a physics decision with a citation requirement. The caveat
+  is now stated in the `.sif` itself, beside the body-force omission, so the artifact carries it.
+
+### Credit where the seats earned it
+
+**Batch E refused to invent a value under direct pressure from a passing test.** The coverage check
+would have gone green with four copies of the emitter's zero-velocity block; `TopFarField` was instead
+declared with no velocity components and a comment explaining that neither an outflow nor a prescribed
+pressure is cited for this geometry. That is the fluid domain's hardest rule honoured when breaking it
+was easier and would not have been caught.
+
+Batch A's netlist now reads `HV output power: 25.79 W (derived from profile, secondary side of
+converter)` — derived rather than typed, and it names which side of the converter, which is exactly the
+ambiguity the withdrawn `~80-120 W` left open. Batch D's `femm-lua-bat → absent` and its `pyfemm`/
+`pywin32` absence both survived independent re-checking.
+
+### Rule, sharpened for the fourth time
+
+**A test may assert a property, never a token.** `"csolv" in verdict`, `len(verdict) > 60` and the
+earlier `occurrences == 0` over source text are all token assertions, and all three put false content
+into something that reads as verified. Prefer moving the seam and watching the outputs follow; prefer
+structured fields over prose that can be padded.

@@ -42,7 +42,7 @@ fraction (a conversion-efficiency proxy for the driver + multiplier chain).
 
 Burst-window summary
 --------------------
-The controller drives 3-5 s bursts. :func:`burst_window` selects the samples
+The controller drives short bursts. :func:`burst_window` selects the samples
 where the HV is live (``P_HV_W`` above a threshold) and :func:`summarize`
 reports mean and peak of the key series within that window, so a short logged
 burst reduces to a handful of spec-sheet numbers.
@@ -204,8 +204,14 @@ def burst_window(
     """Return the sub-frame of samples inside the active HV burst.
 
     A sample is "in burst" when its HV electrical power ``P_HV_W`` exceeds
-    ``threshold_frac`` of the run's peak ``P_HV_W``. This isolates the 3-5 s
-    powered window from the idle head/tail of the log.
+    ``threshold_frac`` of the run's peak ``P_HV_W``. This isolates the powered
+    window from the idle head/tail of the log, whatever its duration.
+
+    The burst duration is deliberately **not** stated here. It read "3-5 s" until
+    2026-09-20, inherited from the AI Studio conversation as a claim about a
+    controller that has never been built, supported by nothing. Withdrawn rather
+    than moved into the profile, because inventing a field to hold an unsourced
+    figure is the same act with extra ceremony. The window is found from the data.
 
     Parameters
     ----------

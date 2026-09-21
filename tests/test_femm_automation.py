@@ -49,11 +49,11 @@ EXPECTED_ROUTES = ("femm-lua-bat", "com-typelib", "solver-exe-direct")
 
 #: Verdicts a route may carry. ``unverified`` is deliberately **not** among them: the whole point of
 #: the task is that every route leaves with a verdict, and "we did not look" is a verdict only when
-#: it says why looking was impossible.
-ALLOWED_VERDICTS = ("works", "absent", "fails", "not-attempted-because")
+#: it says what was looked for.
+ALLOWED_VERDICTS = ("works", "absent", "fails", "not-attempted")
 
 
-def _routes() -> dict[str, str]:
+def _routes() -> dict[str, Any]:
     """The route register, or a failure stating what it must be.
 
     ``getattr`` rather than an import so its absence is a readable assertion instead of a
@@ -88,21 +88,56 @@ class TestEveryCandidateRouteLeavesWithAVerdict:
 
     @pytest.mark.parametrize("route", EXPECTED_ROUTES)
     def test_the_verdict_is_one_of_the_declared_kinds(self, route: str) -> None:
-        verdict = _routes().get(route, "")
-        assert any(verdict.startswith(v) for v in ALLOWED_VERDICTS), (
-            f"{route!r} carries {verdict!r}, which does not begin with one of {ALLOWED_VERDICTS}. "
-            f"A verdict has to be machine-readable at its head so a reader cannot mistake a "
-            f"hedge for a result."
+        entry = _routes().get(route)
+        assert entry is not None, f"{route!r} is not registered"
+        assert entry.verdict in ALLOWED_VERDICTS, (
+            f"{route!r} carries verdict {entry.verdict!r}, which is not one of {ALLOWED_VERDICTS}. "
+            f"The verdict is a closed set so a reader cannot mistake a hedge for a result."
         )
 
     @pytest.mark.parametrize("route", EXPECTED_ROUTES)
-    def test_the_verdict_carries_its_evidence(self, route: str) -> None:
-        """A verdict without evidence is the assumption it was supposed to replace."""
-        verdict = _routes().get(route, "")
-        assert len(verdict) > 60, (
-            f"{route!r}'s verdict is {verdict!r}, too short to carry evidence. State what was run "
-            f"or looked for, and what came back."
+    def test_the_verdict_carries_its_evidence_in_named_fields(self, route: str) -> None:
+        """Each of ``tried``, ``observed`` and ``checked_on`` is separately non-empty.
+
+        **This replaced a character-count check, 2026-09-20.** The original asserted
+        ``len(verdict) > 60`` on a single prose string, which rewards **length rather than truth** — and
+        that is not hypothetical. The ``solver-exe-direct`` verdict passed it while asserting that
+        ``csolv.exe`` requires a ``.pro`` problem file: FEMM has no ``.pro`` format, and ``csolv`` is
+        the current-flow solver rather than the electrostatics one. A fabricated file extension and a
+        misattributed binary scored exactly as well as an observation, because the only thing being
+        measured was how many characters were present.
+
+        Splitting the evidence into *what was tried* and *what came back* makes each separately
+        empty-checkable, which is a property. A character count is a token assertion wearing property
+        clothing, which is the same error the planner has now made three times.
+        """
+        entry = _routes().get(route)
+        assert entry is not None, f"{route!r} is not registered"
+        for field in ("tried", "observed", "checked_on"):
+            value = getattr(entry, field, "")
+            assert isinstance(value, str) and value.strip(), (
+                f"{route!r} has an empty {field!r}. `tried` says what was done, `observed` says what "
+                f"came back, `checked_on` dates it. An empty `tried` means nobody looked, which is "
+                f"itself the finding."
+            )
+        assert len(entry.observed.split()) >= 8, (
+            f"{route!r}'s `observed` is {entry.observed!r}, too terse to be an observation. State "
+            f"what came back, not whether it worked."
         )
+
+    def test_no_verdict_claims_a_file_format_femm_does_not_have(self) -> None:
+        """``.pro`` specifically, because a fabricated format is what got past the old check.
+
+        FEMM's problem files are ``.fem`` (magnetics), ``.fee`` (electrostatics), ``.feh`` (heat flow)
+        and ``.fec`` (current flow) — read from the solver binaries' own strings. Nothing in FEMM uses
+        ``.pro``, and the project's own Lua already writes a ``.fee``.
+        """
+        for route, entry in _routes().items():
+            blob = f"{entry.tried} {entry.observed}".lower()
+            assert ".pro" not in blob, (
+                f"{route!r} names a .pro file. FEMM has no such format; the electrostatics problem "
+                f"file is .fee, which ehd_wire_collector.lua already writes via ei_saveas."
+            )
 
     def test_the_bat_route_is_recorded_absent_on_this_install(self) -> None:
         """Already verified: no ``.bat`` exists anywhere under ``C:\\femm42``.
@@ -110,9 +145,9 @@ class TestEveryCandidateRouteLeavesWithAVerdict:
         Pinned because it is the route the screenshot named first, and the next reader will find the
         same screenshot. Recording the negative is what stops the lead being chased twice.
         """
-        verdict = _routes().get("femm-lua-bat", "")
-        assert verdict.startswith("absent"), (
-            f"femm-lua-bat is recorded as {verdict!r}. The 2026-09-19 disk check found no .bat, "
+        entry = _routes().get("femm-lua-bat")
+        assert entry is not None and entry.verdict == "absent", (
+            f"femm-lua-bat is recorded as {entry!r}. The 2026-09-19 disk check found no .bat, "
             f".cmd or .py file anywhere under C:\\femm42 on this install. If a later FEMM version "
             f"ships one, supersede this test rather than editing the finding."
         )
@@ -125,7 +160,7 @@ class TestTheClassificationFollowsTheVerdicts:
         The same shape as the LTspice discovery: a tool classified manual-only because nobody had
         tried, then found to run headless in 20 seconds.
         """
-        working = {k: v for k, v in _routes().items() if v.startswith("works")}
+        working = {k: v for k, v in _routes().items() if v.verdict == "works"}
         if not working:
             return  # covered by the no-route case below
         assert _femm_spec().manual_only is False, (
@@ -141,7 +176,7 @@ class TestTheClassificationFollowsTheVerdicts:
         that can be driven headlessly and still has its version transcribed by hand is carrying an
         operator-typed figure for no reason, and a typed figure has no reviewer.
         """
-        working = {k: v for k, v in _routes().items() if v.startswith("works")}
+        working = {k: v for k, v in _routes().items() if v.verdict == "works"}
         if not working:
             return
         spec = _femm_spec()
@@ -164,7 +199,7 @@ class TestTheClassificationFollowsTheVerdicts:
         """
         if "femm" in detect.TOOLS_WITHOUT_A_VERSION_PROBE:
             return
-        working = {k: v for k, v in _routes().items() if v.startswith("works")}
+        working = {k: v for k, v in _routes().items() if v.verdict == "works"}
         assert working, (
             "femm has been removed from TOOLS_WITHOUT_A_VERSION_PROBE but no FEMM automation route "
             "is recorded as working. The register floor was lowered to 4 specifically to allow this "
@@ -179,7 +214,7 @@ class TestTheClassificationFollowsTheVerdicts:
         attempted. An unexamined assumption and a verified constraint look identical in a register
         and are completely different facts.
         """
-        if any(v.startswith("works") for v in _routes().values()):
+        if any(v.verdict == "works" for v in _routes().values()):
             return
         reason = detect.TOOLS_WITHOUT_A_VERSION_PROBE.get("femm", "")
         assert any(
@@ -200,7 +235,7 @@ class TestTheHeadlessLoopDependencyIsVisible:
         text = "\n".join(
             p.read_text(encoding="utf-8") for p in (REPO_ROOT / ".kiro" / "steering").glob("*.md")
         )
-        register_text = " ".join(_routes().values())
+        register_text = " ".join(f"{v.tried} {v.observed}" for v in _routes().values())
         combined = (text + register_text).lower()
         assert "headless" in combined, (
             "nothing in the steering layer or the route register says why FEMM's automation story "
@@ -212,17 +247,37 @@ class TestTheReconnaissanceIsPinned:
     """Facts established on disk 2026-09-19. Pinned so a later change is visible as a change."""
 
     def test_the_type_library_is_named_as_the_com_route(self) -> None:
-        verdict = _routes().get("com-typelib", "")
-        assert "tlb" in verdict.lower() or "com" in verdict.lower(), (
+        entry = _routes().get("com-typelib")
+        blob = f"{entry.tried} {entry.observed}".lower() if entry else ""
+        assert "tlb" in blob or "com" in blob, (
             "the COM route's verdict does not mention the type library it depends on. "
             "C:\\femm42\\bin\\femm.tlb is the binding, and naming it is what makes the verdict "
             "checkable by someone else."
         )
 
     def test_the_direct_solver_route_names_the_electrostatics_solver(self) -> None:
-        verdict = _routes().get("solver-exe-direct", "")
-        assert "csolv" in verdict.lower(), (
-            "the direct-solver verdict does not name csolv.exe. The FEMM install ships its solvers "
-            "as separate executables — belasolv, csolv, hsolv, plus triangle as the mesher — and "
-            "csolv is the electrostatics one this project needs."
+        """``belasolv.exe``, not ``csolv.exe``.
+
+        **This test asserted the wrong solver until 2026-09-20 and is the reason the register named
+        the wrong one.** The planner's reconnaissance inferred "csolv" was electrostatics from its
+        name; the test then *mandated* that the verdict say so, and the implementing seat complied
+        correctly with a false requirement. Resolved by reading the ASCII strings out of each solver
+        binary and matching the problem-file extension each one names:
+
+            belasolv.exe -> .fee     electrostatics   <- what ehd_wire_collector.lua writes
+            csolv.exe    -> .fec     current flow
+            hsolv.exe    -> .feh     heat flow
+            fkn.exe      -> .fem     magnetics
+
+        The lesson is not "check harder". It is that a test asserting a **token** carries the
+        planner's error with the authority of a check, where a test asserting a **property** would
+        not have had an opinion about which binary is which.
+        """
+        entry = _routes().get("solver-exe-direct")
+        assert entry is not None, "solver-exe-direct is not registered"
+        blob = f"{entry.tried} {entry.observed}".lower()
+        assert "belasolv" in blob, (
+            "the direct-solver verdict does not name belasolv.exe, which is FEMM's electrostatics "
+            "solver and the one this project needs. FEMM ships its solvers as separate executables; "
+            "csolv is current flow, not electrostatics."
         )

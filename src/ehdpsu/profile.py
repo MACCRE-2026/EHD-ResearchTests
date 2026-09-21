@@ -298,8 +298,15 @@ DESIGN_VALUE_EXEMPTIONS: dict[str, str] = {
 GENERATED_FIGURE_EXEMPTIONS: dict[str, str] = {
     "ehd_cell.sif:1.8e-5 Pa": "Air viscosity at 20°C per White, Viscous Fluid Flow, 3rd ed., Table 1.4. A cited material property.",
     "ehd_llc_cw.cir:4e-06 s": "Switching period (1/f_sw), derived from profile value f_sw_hz.",
-    "ehd_llc_cw.cir:5e-09 N": "False positive: the regex pattern matches 'IS=5e-09 N=...' from the diode model, where N is the emission coefficient parameter name, not a unit. Both values (IS and N) derive from the profile.",
 }
+# The entry for 'ehd_llc_cw.cir:5e-09 N' was REMOVED on 2026-09-20 rather than kept.
+#
+# It was registered with an accurate diagnosis -- the matcher read `IS=5e-09 N=2.0` from the diode
+# model and took `N` (the emission coefficient's parameter NAME) for newtons. But a register of
+# "figures that legitimately appear without tracing to the profile" is the wrong home for a defect in
+# the matcher: it files tooling debt in a physics register, and it leaves the false positive live for
+# every future artifact. Fixed at the source instead -- the pattern now rejects a unit followed by
+# `=`, because a token about to be assigned a value is a parameter name and not a unit.
 
 
 @dataclass(frozen=True)

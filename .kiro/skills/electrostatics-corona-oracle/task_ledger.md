@@ -222,3 +222,76 @@ exists, it is recorded, and its basis is `solved`.
     analytic. Until then the attribution is reasoning, not evidence.
   - **The 1° arc discretisation coped**, which was an open question: 360 segments around a 25 µm circle
     inside a 240 mm domain meshed to 14631 elements without complaint.
+
+---
+
+## 2026-09-20 — FEMM's headless routes, and two wrong claims I made about them
+
+Three routes were examined for CRSDL Task 7, because a scripted Plausibility Contract loop cannot
+contain a GUI step and FEMM is the electrostatics route.
+
+### The solvers, read from the binaries rather than inferred
+
+```
+belasolv.exe -> .fee     electrostatics   <- what ehd_wire_collector.lua writes via ei_saveas
+csolv.exe    -> .fec     current flow
+hsolv.exe    -> .feh     heat flow
+fkn.exe      -> .fem     magnetics
+```
+
+Obtained by extracting ASCII strings from each binary and matching the problem-file extension each
+names. **This corrects a planner error.** The 2026-09-19 reconnaissance recorded `csolv.exe` as the
+electrostatics solver, inferring it from the name. It is the current-flow solver. Worse, the test
+guarding the route register then *asserted* `"csolv" in verdict`, so the register was **required** to
+name the wrong tool and the implementing seat complied correctly with a false requirement.
+
+### Verdicts as they now stand
+
+| Route | Verdict | Basis |
+|---|---|---|
+| `femm-lua-bat` | **absent** | no `.bat`, `.cmd` or `.py` exists anywhere under `C:\femm42` |
+| `com-typelib` | **not-attempted** | `bin\femm.tlb` present, but `win32com`, `pyfemm`, `femm`, `pythoncom` and `win32api` are all absent — no binding to drive it |
+| `solver-exe-direct` | **fails** | `belasolv.exe` run against a real `.fee`, timed out at 120 s, wrote nothing |
+
+### The second wrong claim, and how it was caught
+
+The first corrected verdict said *"no `.fee` file exists anywhere on this machine"*, so the route was
+recorded `not-attempted`. **That was false, and the cause was my own tooling error:**
+`Get-ChildItem -Path 'C:\femm42' -Include '*.fee' -Recurse` silently returns nothing because `-Include`
+needs a wildcard on `-Path`. The correct form finds three:
+
+```
+bdemo1.fee   bdemo2.fee   ehd_wire_collector.fee
+```
+
+The third is **ours** — written into FEMM's working directory by the 2026-09-16 session, exactly as
+`PENDING_femm_wire_collector.txt` had said it would be. I had read that note earlier the same session.
+A silent-empty search result was taken for an absence, which is the same shape as
+*principle 2, an approximately-correct identifier is worse than an absent one*: the search returned
+nothing and nothing was read as "there is nothing."
+
+So the route was then actually attempted: `ehd_wire_collector.fee` copied to a scratch directory,
+`belasolv.exe` passed it as its sole argument with `cwd` set there, stdin closed, 120 s timeout. It ran
+the full 120 s, wrote **no output files**, and printed nothing on either stream. Bare and `-h`
+invocations had already timed out at 12 s without printing usage.
+
+**Verdict `fails`, not `not-attempted`** — the input existed, was ours, and was valid. A different
+argument convention may well work; that is now the specific open question instead of the whole route
+being unexamined.
+
+### Consequences recorded
+
+- `femm` keeps `manual_only=True` and stays in `TOOLS_WITHOUT_A_VERSION_PROBE`, but its reason now
+  states **one verified absence, one observed failure, one unexamined route** rather than the earlier
+  `verified negative:` over three — which was *principle 3 in the negative direction*, a stronger
+  status than the work supported.
+- **CRSDL Task 8's headless loop has no electrostatics route today.** The nearest available one is the
+  COM binding, which needs `pyfemm` or `pywin32` installed — a one-line dependency decision, not a
+  research problem.
+- `FEMM_AUTOMATION_ROUTES` is now `dict[str, RouteVerdict]` with `tried`, `observed` and `checked_on`
+  as separate fields, because the test that let the `.pro` fabrication through asserted only
+  `len(verdict) > 60` and so rewarded length rather than truth. There is no `.pro` format in FEMM.
+
+**Nothing here changes any physics.** No FEMM solve was performed, no field was read back, and
+`RECORD_femm_wire_collector_2026-09-16.json` remains the project's only `solved` entry — still the
+corona-onset geometry factor from a Laplace solve with no space charge, not the loaded operating field.

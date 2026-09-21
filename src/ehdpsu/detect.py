@@ -51,36 +51,96 @@ __all__ = (
     "detect_tool",
 )
 
-#: FEMM automation routes with their verified verdicts.
+
+@dataclass(frozen=True)
+class RouteVerdict:
+    """One automation route's verdict, with its evidence in named fields.
+
+    **Structured rather than prose, corrected 2026-09-20.** The first version of this register mapped
+    each route to a single string and the test guarding it asserted only ``len(verdict) > 60`` — so it
+    rewarded **length, not truth**. A verdict padded with a plausible-sounding file extension scored
+    identically to one carrying a real observation, and that is exactly what happened: the
+    ``solver-exe-direct`` verdict asserted a ``.pro`` problem file, a format FEMM does not have.
+
+    Splitting the evidence into ``tried`` and ``observed`` makes "did anyone look, and what came back"
+    two separate questions that can each be empty-checked. That is a property. A character count is
+    not.
+    """
+
+    #: One of ``works``, ``absent``, ``fails``, ``not-attempted``. Machine-readable, so a reader
+    #: cannot mistake a hedge for a result.
+    verdict: str
+    #: What was actually done. An empty string means nobody looked, which is itself a finding.
+    tried: str
+    #: What came back. The observation, not the interpretation.
+    observed: str
+    #: ISO date of the check, so a stale verdict is visibly stale.
+    checked_on: str
+
+
+#: FEMM automation routes and what is actually known about each.
 #:
-#: The keys are route identifiers; values are verdicts starting with one of: ``works``, ``absent``,
-#: ``fails``, ``not-attempted-because``, followed by evidence explaining what was attempted and what
-#: came back. Each verdict must be >60 characters to carry its evidence.
+#: **Two corrections applied 2026-09-20 after domain review.**
 #:
-#: These were established by disk inspection on 2026-09-19. Running them requires external
-#: dependencies that are not installed:
-#: - ``femm-lua-bat`` needs a .bat/.cmd/.py script (none exist under C:\femm42)
-#: - ``com-typelib`` needs pyfemm or pywin32 (neither installed)
-#: - ``solver-exe-direct`` needs csolv.exe with a proper .pro input file (not the same as .lua)
-FEMM_AUTOMATION_ROUTES: dict[str, str] = {
-    "femm-lua-bat": (
-        "absent: no .bat, .cmd or .py file exists anywhere under C:\\femm42. Disk checked on "
-        "2026-09-19; this is the route the screenshot named first, and the next reader will find "
-        "the same screenshot. If a later FEMM version ships one, supersede this test rather than "
-        "editing the finding."
+#: 1. The electrostatics solver is **``belasolv.exe``**, not ``csolv.exe``. Read from the binaries'
+#:    own strings: ``belasolv -> .fee``, ``csolv -> .fec`` (current flow), ``hsolv -> .feh`` (heat),
+#:    ``fkn -> .fem`` (magnetics). The planner's reconnaissance mislabelled it, and the test guarding
+#:    this register then *mandated* naming ``csolv``, so the error arrived with the authority of a
+#:    check. ``solver_inputs/ehd_wire_collector.lua`` writes ``ei_saveas("ehd_wire_collector.fee")``,
+#:    so the file this project already generates is exactly what ``belasolv.exe`` consumes.
+#: 2. There is **no ``.pro`` format** in FEMM. That claim was fabricated.
+#:
+#: The practical consequence reverses the earlier reading: this route is not blocked by a format
+#: mismatch, it is simply **untried**, and the path to trying it is concrete.
+FEMM_AUTOMATION_ROUTES: dict[str, RouteVerdict] = {
+    "femm-lua-bat": RouteVerdict(
+        verdict="absent",
+        tried=(
+            "Searched C:\\femm42 recursively for *.bat, *.cmd and *.py. This is the route the "
+            "operator's screenshot named first, so recording the negative is what stops the lead "
+            "being chased twice."
+        ),
+        observed=(
+            "No .bat, .cmd or .py file exists anywhere under C:\\femm42 on this install. If a later "
+            "FEMM version ships femm-lua.bat, supersede this entry rather than editing it."
+        ),
+        checked_on="2026-09-19",
     ),
-    "com-typelib": (
-        "not-attempted-because: pyfemm and pywin32 are not installed. The type library "
-        "C:\\femm42\\bin\\femm.tlb exists, but without a Python binding the route cannot be "
-        "tested. This is an observed constraint, not an assumption. If pyfemm is installed, this "
-        "route should be verified by attempting to create a COM object and load a simple problem."
+    "com-typelib": RouteVerdict(
+        verdict="not-attempted",
+        tried=(
+            "Checked for a Python COM binding with importlib.util.find_spec over win32com, pyfemm, "
+            "femm, pythoncom and win32api."
+        ),
+        observed=(
+            "All five absent, so no binding exists to drive the interface. The type library "
+            "C:\\femm42\\bin\\femm.tlb IS present, which means the route is available in principle "
+            "and blocked only by a missing dependency. Installing pyfemm or pywin32 makes it "
+            "testable; ActiveX is not disqualifying, it only changes what the adapter records."
+        ),
+        checked_on="2026-09-19",
     ),
-    "solver-exe-direct": (
-        "not-attempted-because: csolv.exe requires a .pro problem file, not the .lua scripts "
-        "used by the GUI. The existing solver_inputs/ehd_wire_collector.lua cannot be run "
-        "directly. This route would need a conversion step from Lua to .pro format, which is "
-        "not established here. If such a converter exists or can be derived, this route should "
-        "be verified by running a simple test problem."
+    "solver-exe-direct": RouteVerdict(
+        verdict="fails",
+        tried=(
+            "Identified the electrostatics solver by reading the ASCII strings out of each solver "
+            "binary and matching the problem-file extension each names. Then ran belasolv.exe three "
+            "ways, stdin closed: with no arguments, with -h, and finally against a real problem file "
+            "-- C:\\femm42\\examples\\ehd_wire_collector.fee, which THIS PROJECT's own FEMM session "
+            "wrote on 2026-09-16 -- copied to a scratch directory and passed as the sole argument "
+            "with cwd set there, under a 120 second timeout."
+        ),
+        observed=(
+            "belasolv.exe takes .fee and is the electrostatics solver; csolv.exe takes .fec and is "
+            "current flow. All three invocations TIMED OUT. The bare and -h forms neither printed "
+            "usage nor exited within 12 s. Given a valid .fee it ran for the full 120 s, wrote NO "
+            "output files at all, and produced nothing on stdout or stderr -- so it does not solve "
+            "headlessly by this invocation and its argument convention is not established here. "
+            "Attempted and failed rather than untried: the input existed, was ours, and was valid. "
+            "A different argument form may work; that is now the specific open question rather than "
+            "the whole route being unexamined."
+        ),
+        checked_on="2026-09-20",
     ),
 }
 
@@ -264,10 +324,17 @@ TOOLS_WITHOUT_DEFAULT_PATHS: dict[str, str] = {
 # `solved` instead of `analytical-placeholder`.
 TOOLS_WITHOUT_A_VERSION_PROBE: dict[str, str] = {
     "femm": (
-        "verified negative: femm-lua-bat, com-typelib and solver-exe-direct were assessed on "
-        "2026-09-19. The .bat/.cmd/.py scripts are absent, pyfemm/pywin32 are not installed, "
-        "and csolv.exe requires a .pro file (not the .lua scripts). A headless route exists on "
-        "disk but is not runnable without additional dependencies that are not installed."
+        # Corrected 2026-09-20. This read 'verified negative:' over three routes of which only ONE
+        # was actually verified; the other two are untried. Unattempted is not verified-absent, and
+        # collapsing them is principle 3 in the negative direction -- reporting a stronger status
+        # than the work supports. See FEMM_AUTOMATION_ROUTES for each route's own verdict.
+        "ONE route verified absent, ONE attempted and failed, ONE untried; none working as of "
+        "2026-09-20. Absent: no femm-lua.bat or any .bat/.cmd/.py exists under C:\\femm42. Failed: "
+        "belasolv.exe -- the electrostatics solver, which takes .fee, NOT csolv.exe which is current "
+        "flow -- was run against this project's own ehd_wire_collector.fee and timed out at 120 s "
+        "producing no output. Untried: the COM route via bin\\femm.tlb is available in principle and "
+        "blocked only by pyfemm/pywin32 being absent. So femm keeps manual_only=True on one verified "
+        "absence, one observed failure and one unexamined route -- not on a settled negative."
     ),
     "ltspice": (
         "GUI-driven, with no documented version-and-exit switch. Its installer does however record "

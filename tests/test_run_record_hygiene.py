@@ -151,6 +151,92 @@ class TestTheOrphanedPending:
         _write_record(tier, "femm_cell_v2", "2026-09-16", "femm", "synthetic_inputs/a.lua")
         assert "orphaned-pending" in _kinds(_validate(tier))
 
+    def test_the_real_skeleton_shape_is_matched_on_its_hash(self, tier: Path) -> None:
+        """The regression for the defect every other test in this class missed.
+
+        **Added 2026-09-20 after verification.** The live tier contained
+        ``PENDING_femm_wire_collector.txt`` beside its completed ``RECORD`` since 2026-09-16 — the
+        exact case audit finding F9 named — and ``validate_tier`` reported **zero findings** on it.
+
+        The cause was a shape mismatch between the fixtures and reality. Every synthetic pending in
+        this module wrote ``tool = ...`` and ``input_path = ...``; the skeletons this project actually
+        generates write **``tool_version`` and ``input_sha256`` and neither of those keys.** The
+        matcher required both of the ones that do not exist, and appended nothing when they were
+        absent, so every live pending was dropped before matching ever happened.
+
+        Fifteen tests green, the live-tier check green, the defect untouched. *Principle 6, a green
+        test suite is not evidence of a working system* — and the reason it was green is that the
+        planner wrote the fixtures, so they agreed with the planner's idea of the format rather than
+        with the format.
+
+        This fixture is written to match the real file byte-shape: a long comment block, then
+        ``tool_version`` and ``input_sha256``, then empty value slots.
+        """
+        digest = "e8239f993f95027940de6561e9504c5815a468d9231c4569a81d30bbd06a0d6e"
+        (tier / "PENDING_femm_wire_collector.txt").write_text(
+            "# ehd-run-result v1\n"
+            "# ----------------------------------------------------------------\n"
+            "# A long comment block, as the real skeletons carry.\n"
+            '#     dofile("B:/EHD-ResearchTests/synthetic_inputs/a.lua")\n'
+            "# ----------------------------------------------------------------\n"
+            "tool_version = femm 4.2  Apr 21 2019 (x64)\n"
+            f"input_sha256 = {digest}\n"
+            "E_peak_surface_V_per_m = \n"
+            "C_cell_F = \n",
+            encoding="utf-8",
+        )
+        (tier / "RECORD_femm_wire_collector_2026-09-16.json").write_text(
+            json.dumps(
+                {
+                    "basis": "solved",
+                    "tool": "femm",
+                    "tool_version": "femm 4.2  Apr 21 2019 (x64)",
+                    "input_path": "B:\\EHD-ResearchTests\\synthetic_inputs\\a.lua",
+                    "input_sha256": digest,
+                    "profile_id": "synthetic",
+                    "run_utc": "2026-09-16T00:00:00+00:00",
+                    "values": {"E_peak_surface_V_per_m": 1.0},
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert "orphaned-pending" in _kinds(_validate(tier)), (
+            "a real-shaped skeleton sharing its input hash with a completed record was not reported. "
+            "The hash is the input's identity; input_path is only a description of where a copy sat, "
+            "and the two file formats do not agree on whether to record it at all."
+        )
+
+    def test_a_pending_nothing_can_identify_is_reported_not_skipped(self, tier: Path) -> None:
+        """A skeleton with no hash and no tool/path pair must be a finding.
+
+        The original branch appended nothing and moved on, which is how a whole class of live pending
+        became invisible. *An unrecognised shape is an error, never an empty result* — the adapter
+        contract's rule, applied to the tier's own artifacts.
+        """
+        (tier / "PENDING_mystery.txt").write_text(
+            "# ehd-run-result v1\ntool_version = something 1.0\nsome_value = \n", encoding="utf-8"
+        )
+        assert "unidentifiable-pending" in _kinds(_validate(tier))
+
+    def test_a_commented_declaration_is_not_a_declaration(self, tier: Path) -> None:
+        """The real skeletons quote example commands inside comments.
+
+        ``#     dofile("B:/.../a.lua")`` must not be parsed as a key-value declaration, or a comment
+        could supply the very identity the file is missing — which would make the matcher agree with
+        prose rather than with data.
+        """
+        (tier / "PENDING_commented.txt").write_text(
+            "# ehd-run-result v1\n"
+            "#   tool = femm\n"
+            "#   input_path = synthetic_inputs/a.lua\n"
+            "tool_version = femm 4.2\n"
+            "x = \n",
+            encoding="utf-8",
+        )
+        assert "unidentifiable-pending" in _kinds(
+            _validate(tier)
+        ), "commented-out keys were read as declarations; only uncommented lines declare anything"
+
     def test_a_pending_for_a_different_input_is_not_a_finding(self, tier: Path) -> None:
         """Two runs of one tool on different inputs are two runs, not a stale skeleton."""
         _write_pending(tier, "femm_other", "femm", "synthetic_inputs/other.lua")

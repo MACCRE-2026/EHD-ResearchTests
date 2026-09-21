@@ -183,7 +183,13 @@ def write_run_record(record: RunRecord, destination: Path) -> Path:
 
 #: The tier file naming convention. Every file in ``artifacts/05_Solver_Runs/`` must use one of
 #: these prefixes, or it is a finding.
-TIER_FILE_PREFIXES: frozenset[str] = frozenset(("RECORD_", "PENDING_", "INCOMPLETE_"))
+#: ``SUPERSEDED_`` added 2026-09-20. Doctrine's terminal states are ``COMPLETED``, ``WITHDRAWN`` and
+#: ``SUPERSEDED``, and a skeleton whose run has since happened is superseded — it is not deleted,
+#: because a deleted record takes its reasoning with it, and it is not left as ``PENDING_``, because
+#: that reads as work still owed. The superseding artifact is named inside the file.
+TIER_FILE_PREFIXES: frozenset[str] = frozenset(
+    ("RECORD_", "PENDING_", "INCOMPLETE_", "SUPERSEDED_")
+)
 
 
 class TierFinding(NamedTuple):
@@ -204,8 +210,10 @@ def validate_tier(tier: Path) -> list[TierFinding]:
     a ``detail`` naming the files involved.
 
     Findings reported:
-    - ``orphaned-pending``: A PENDING exists for which a completed RECORD already exists (matched
-      on tool and input_path, not on slug).
+    - ``orphaned-pending``: A PENDING exists for which a completed RECORD already exists, matched on
+      **input hash** first and on tool-and-input_path second — never on the filename slug.
+    - ``unidentifiable-pending``: A PENDING carries neither an input hash nor a tool-and-path pair,
+      so nothing can match it. Reported rather than skipped.
     - ``undeclared-prefix``: A file uses a prefix not in TIER_FILE_PREFIXES.
     - ``incomplete-record``: A RECORD_*.json lacks tool_version, input_sha256, or values, or has
       any None values in the values dict.
@@ -217,7 +225,8 @@ def validate_tier(tier: Path) -> list[TierFinding]:
         return findings
 
     records: dict[tuple[str, str], Path] = {}  # (tool, input_path) -> RECORD path
-    pendings: list[tuple[Path, str, str]] = []  # [(path, tool, input_path), ...]
+    records_by_hash: dict[str, Path] = {}  # input_sha256 -> RECORD path; the preferred key
+    pendings: list[tuple[Path, str, str, str]] = []  # [(path, tool, input_path, input_sha256), ...]
 
     for item in sorted(tier.iterdir()):
         if not item.is_file():
@@ -281,22 +290,62 @@ def validate_tier(tier: Path) -> list[TierFinding]:
                         )
                     else:
                         records[(tool, input_path_str)] = item
+                        # Index by input hash as well, and prefer it when matching. The hash IS the
+                        # input's identity; a path is a description of where a copy of it sat. See
+                        # the note on _match_key below for why this was not optional.
+                        if input_sha256:
+                            records_by_hash[input_sha256.lower()] = item
 
                 elif prefix == "PENDING_":
-                    # Collect PENDING info for orphan detection
+                    # Collect PENDING info for orphan detection.
+                    #
+                    # THIS BRANCH SILENTLY DISCARDED EVERY REAL PENDING UNTIL 2026-09-20.
+                    # It required both a `tool` and an `input_path` key and appended nothing when
+                    # either was absent. The skeletons this project actually generates carry
+                    # `tool_version` and `input_sha256` and **neither** of those two keys, so every
+                    # live pending was dropped before matching and `validate_tier` reported a clean
+                    # tier over the exact orphan that audit finding F9 named.
+                    #
+                    # Two defects in one. The matcher used the wrong key, and an unparseable pending
+                    # vanished instead of being reported -- *an unrecognised shape is an error, never
+                    # an empty result*. Both are fixed here: match on the hash, and report a pending
+                    # that cannot be identified rather than ignoring it.
                     try:
                         text = item.read_text(encoding="utf-8")
                         lines = {}
                         for line in text.split("\n"):
+                            if line.lstrip().startswith("#"):
+                                continue  # a commented example is not a declaration
                             if "=" in line:
                                 key, val = line.split("=", 1)
                                 lines[key.strip()] = val.strip()
-                        tool = lines.get("tool", "").strip()
-                        input_path_str = lines.get("input_path", "").strip()
-                        if tool and input_path_str:
-                            pendings.append((item, tool, input_path_str))
-                    except (OSError, ValueError):
-                        pass
+                    except OSError:
+                        findings.append(
+                            TierFinding(
+                                kind="unreadable",
+                                detail=f"{name}: could not be read",
+                            )
+                        )
+                        break
+
+                    pending_hash = lines.get("input_sha256", "").strip().lower()
+                    pending_tool = lines.get("tool", "").strip()
+                    pending_input = lines.get("input_path", "").strip()
+                    if pending_hash or (pending_tool and pending_input):
+                        pendings.append((item, pending_tool, pending_input, pending_hash))
+                    else:
+                        findings.append(
+                            TierFinding(
+                                kind="unidentifiable-pending",
+                                detail=(
+                                    f"{name}: carries neither an input_sha256 nor a "
+                                    f"tool-and-input_path pair, so it cannot be matched against any "
+                                    f"record. A skeleton nothing can identify cannot be retired, and "
+                                    f"silently skipping it is how this tier reported clean over a "
+                                    f"real orphan"
+                                ),
+                            )
+                        )
 
                 break
 
@@ -308,13 +357,22 @@ def validate_tier(tier: Path) -> list[TierFinding]:
                 )
             )
 
-    # Check for orphaned pendings (must happen after all records are cataloged)
-    for pending_path, tool, input_path_str in pendings:
-        if (tool, input_path_str) in records:
+    # Check for orphaned pendings (must happen after all records are cataloged).
+    #
+    # Hash first, path second. The input hash identifies the exact bytes fed to the solver, which is
+    # what "the same run" means; `input_path` only says where a copy of those bytes sat, and the live
+    # tier proved the two formats do not even agree on whether to record it.
+    for pending_path, tool, input_path_str, pending_hash in pendings:
+        superseded_by = None
+        if pending_hash and pending_hash in records_by_hash:
+            superseded_by = records_by_hash[pending_hash]
+        elif tool and input_path_str and (tool, input_path_str) in records:
+            superseded_by = records[(tool, input_path_str)]
+        if superseded_by is not None:
             findings.append(
                 TierFinding(
                     kind="orphaned-pending",
-                    detail=f"{pending_path.name} is orphaned beside {records[(tool, input_path_str)].name}",
+                    detail=f"{pending_path.name} is orphaned beside {superseded_by.name}",
                 )
             )
 
